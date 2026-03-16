@@ -1,5 +1,5 @@
-# EnLIghTen
-- **E**mpoweri**n**g the **L**atent **I**ntelli**g**ence of LLMs throug**h** **T**emporal windows on log str**e**ams a**n**d democratic processes
+# EnLIghTenED
+- **E**mpoweri**n**g the **L**atent **I**ntelli**g**ence of LLMs throug**h** **T**emporal Windows on Log Str**e**ams a**n**d **E**volutionary **D**emocratic Processes
 ---
 
 Jared Yu
@@ -33,6 +33,8 @@ With Apache Fluss (incubating), this streamhouse architecture is slowly coming t
 
 Through experimentation, it can be seen that this easy-to-implement streaming log systems enables a novel way of orchestrating AI agents. By funneling LLM outputs to a universally shared log stream, it creates a format where all agents can universally read and write to the same log, creating a shared understanding of the world. Of course, in smaller experiments, this process can be replicated easily using existing database methods. However, the simplicity of Fluss in this case makes the prospects of doing so far more trivial.
 
+This is essentially a Pub/Sub pattern, where actions by agents are sent to the stream and agents in turn all receive the same message.
+
 ### 2.2.2 Temporal Window
 
 ### 2.2.3 Remember to Forget
@@ -47,6 +49,6 @@ Through experimentation, it can be seen that this easy-to-implement streaming lo
 
 ## 4.1 Future Work
 - stream consciousness for robotics - agents acting on a unified world view
-- 
+- container claw for safe tool use
 
 # 5. References
