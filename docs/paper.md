@@ -36,19 +36,28 @@ Through experimentation, it can be seen that this easy-to-implement streaming lo
 This is essentially a Pub/Sub pattern, where actions by agents are sent to the stream and agents in turn all receive the same message.
 
 ### 2.2.2 Temporal Window
+We can create a temporal window 
 
 ### 2.2.3 Remember to Forget
+
 - critical forgetting vs catastrophic forgetting
 
-## 2.3 Democratic Processes
+## 2.3 Evolutionary Democratic Processes
 - organic conversation - emergent culture/society with a unified purpose (single mind/hive mind)
 
 # 3. Results
+
+- better results with many small models - unlock ability to efficiently solve open-ended problems (e.g., github issues)
+- run on SWE bench, SWE bench pro
 
 # 4. Conclusion
 
 ## 4.1 Future Work
 - stream consciousness for robotics - agents acting on a unified world view
 - container claw for safe tool use
+- post-training on enlightened workflows
 
 # 5. References
+
+# Appendix
+
