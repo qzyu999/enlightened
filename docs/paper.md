@@ -15,6 +15,20 @@ The reasoning for this could potentially be contributed to the tools available, 
 
 In this paper, a novel approach towards agentic AI is proposed. We can unlock the underlying strength of LLMs by empowering their latent ability to communicate amongst others in a chatroom-style setting. Combined with a stream-of-consciousness technology, a set of AI agents with corresponding roles (e.g., software architect, project manager, software engineer, software QA tester, and business user) can interact organically in a democratic voting (elaborated on in 2.3) environment, like students collaborating on a group project.
 
+# 1.1 Literature Review
+- AutoGen
+- CrewAI
+- LangGraph
+- MetaGPT
+- ChatDev
+- CAMEL
+- Generative Agents
+
+
+- Talk about "inference" LLM's are probabilistic machines (like normal ML models) - trying to output a result based on context, it guesses, infers its analysis from the data it's given
+- ContainerClaw with evolutionary democracy allows for inference to build upon itself via role play - stacking analysis before settling upon a solution
+    - need data showing multi-round votes leading to improved outcomes
+
 # 2. Methods
 
 ## 2.1 The Chatroom Experience
@@ -22,7 +36,12 @@ Anecdotally, through an experiemnt using Gemini 3.1 Pro [https://gemini.google.c
 
 This format for multi-agent behavior is not too different from what can be seen in AutoGen, the difference being that AutoGen has a single manager that orchestrates the entire flow. The weakness is that this single manager agent is tasked with orchestrating numerous agents over time within a limited context window, this will be elaborated on in 2.2.2.
 
+### 2.1.1 Extension to Theatre
 Some familiarity of how modern LLMs chat with users is needed to understand how this multiuser chatroom can be built into the system.
+
+-> leads to the theatre/Shakespeare analogy (world-stage)
+
+-> choosing roles (e.g., architect, SWE, etc.)
 
 ## 2.2 Log Streams
 
@@ -37,6 +56,8 @@ This is essentially a Pub/Sub pattern, where actions by agents are sent to the s
 
 ### 2.2.2 Temporal Window
 We can create a temporal window 
+- can use fixed sliding window
+- longer (autonomous) runs could benefit from a temporal window (e.g., past 1hr) where users take time to make actions (e.g., coding, documenting, etc.)
 
 ### 2.2.3 Remember to Forget
 
@@ -50,12 +71,17 @@ We can create a temporal window
 - better results with many small models - unlock ability to efficiently solve open-ended problems (e.g., github issues)
 - run on SWE bench, SWE bench pro
 
+## 3.1 Tic-Tac-Toe
+
+## 3.2 SWE-bench
+
 # 4. Conclusion
 
 ## 4.1 Future Work
 - stream consciousness for robotics - agents acting on a unified world view
 - container claw for safe tool use
 - post-training on enlightened workflows
+- scaling from local to cloud (k8s)
 
 # 5. References
 
