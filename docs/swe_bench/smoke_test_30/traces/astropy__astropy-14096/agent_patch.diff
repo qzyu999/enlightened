@@ -1,0 +1,730 @@
+diff --git a/astropy/coordinates/sky_coordinate.py b/astropy/coordinates/sky_coordinate.py
+index ab475f7..b73baa3 100644
+--- a/astropy/coordinates/sky_coordinate.py
++++ b/astropy/coordinates/sky_coordinate.py
+@@ -866,11 +866,57 @@ class SkyCoord(ShapedLikeNDArray):
+             isinstance(self.frame.name, list) and string in self.frame.name
+         )
+ 
++    def __getattribute__(self, attr):
++        """
++        Overrides getattribute to properly handle property access in subclasses.
++
++        This ensures that when a property in a subclass raises an AttributeError
++        (e.g., when accessing a non-existent attribute), the error message
++        correctly identifies the missing attribute rather than the property name.
++        """
++        # Check if this is a property access on this class or its subclasses
++        for cls in type(self).__mro__:
++            if attr in cls.__dict__:
++                descriptor = cls.__dict__[attr]
++                if isinstance(descriptor, property):
++                    # Call the property getter directly and catch AttributeError
++                    try:
++                        return descriptor.fget(self)
++                    except AttributeError as e:
++                        # Store the original error info for __getattr__ to retrieve
++                        object.__setattr__(self, '_last_attr_error', (attr, e))
++                        # Raise a plain AttributeError to signal property access
++                        raise AttributeError()
++
++        # For everything else, use normal attribute access
++        try:
++            return object.__getattribute__(self, attr)
++        except AttributeError:
++            # Delegate to __getattr__ for custom handling
++            return self.__getattr__(attr)
++
+     def __getattr__(self, attr):
+         """
+         Overrides getattr to return coordinates that this can be transformed
+         to, based on the alias attr in the primary transform graph.
+         """
++        # Check if this is a property that raised AttributeError from its getter
++        # In this case, __getattribute__ stored the original error for us to retrieve
++        for cls in type(self).__mro__:
++            if attr in cls.__dict__:
++                descriptor = cls.__dict__[attr]
++                if isinstance(descriptor, property):
++                    # Check if we have stored error info from __getattribute__
++                    try:
++                        last_error = object.__getattribute__(self, '_last_attr_error')
++                    except AttributeError:
++                        last_error = None
++                    if last_error and last_error[0] == attr:
++                        # Re-raise the original error from the property getter
++                        raise last_error[1]
++                    # Plain AttributeError - property exists but failed
++                    raise AttributeError()
++
+         if "_sky_coord_frame" in self.__dict__:
+             if self._is_name(attr):
+                 return self  # Should this be a deepcopy of self?
+diff --git a/astropy/coordinates/tests/test_skycoord_property_error.py b/astropy/coordinates/tests/test_skycoord_property_error.py
+new file mode 100644
+index 0000000..21c86ea
+--- /dev/null
++++ b/astropy/coordinates/tests/test_skycoord_property_error.py
+@@ -0,0 +1,88 @@
++"""
++Test case for the SkyCoord subclass property AttributeError fix.
++
++This test verifies that when a property in a SkyCoord subclass tries to access
++a non-existent attribute, the error message correctly identifies the missing
++attribute rather than the property name.
++
++Related issue: Subclassed SkyCoord gives misleading attribute access message
++"""
++
++import pytest
++from astropy.coordinates import SkyCoord
++
++
++class CustomCoord(SkyCoord):
++    """Subclass with a property that accesses a non-existent attribute."""
++    
++    @property
++    def prop(self):
++        return self.random_attr  # This doesn't exist!
++
++
++class CustomCoordWithValidProperty(SkyCoord):
++    """Subclass with a property that accesses a valid attribute."""
++    
++    @property
++    def ra_deg(self):
++        return self.ra.deg
++
++
++def test_property_accessing_nonexistent_attribute():
++    """
++    Test that accessing a property which tries to access a non-existent
++    attribute raises an AttributeError with the correct attribute name.
++    """
++    c = CustomCoord('00h42m30s', '+41d12m00s', frame='icrs')
++    
++    with pytest.raises(AttributeError) as exc_info:
++        _ = c.prop
++    
++    # The error should mention 'random_attr', not 'prop'
++    error_msg = str(exc_info.value)
++    assert 'random_attr' in error_msg, (
++        f"Expected error to mention 'random_attr', got: {error_msg}"
++    )
++    assert 'prop' not in error_msg or 'random_attr' in error_msg, (
++        f"Error should prioritize mentioning 'random_attr': {error_msg}"
++    )
++
++
++def test_property_accessing_valid_attribute():
++    """
++    Test that accessing a property which accesses a valid attribute works correctly.
++    """
++    c = CustomCoordWithValidProperty('00h42m30s', '+41d12m00s', frame='icrs')
++    
++    # This should work without raising an error
++    ra_deg = c.ra_deg
++    assert ra_deg == 10.625  # 00h42m30s = 10.625 degrees
++
++
++def test_normal_attribute_access_still_works():
++    """
++    Test that normal attribute access (frame transformations) still works.
++    """
++    c = SkyCoord('00h42m30s', '+41d12m00s', frame='icrs')
++    
++    # Frame transformation should still work
++    galactic = c.galactic
++    assert galactic is not None
++
++
++def test_nonexistent_attribute_error_message():
++    """
++    Test that accessing a truly non-existent attribute still gives a clear error.
++    """
++    c = SkyCoord('00h42m30s', '+41d12m00s', frame='icrs')
++    
++    with pytest.raises(AttributeError) as exc_info:
++        _ = c.nonexistent_attribute_xyz
++    
++    error_msg = str(exc_info.value)
++    assert 'nonexistent_attribute_xyz' in error_msg
++    assert 'SkyCoord' in error_msg
++
++
++if __name__ == '__main__':
++    pytest.main([__file__, '-v'])
+diff --git a/test_approaches.py b/test_approaches.py
+new file mode 100644
+index 0000000..5db9f06
+--- /dev/null
++++ b/test_approaches.py
+@@ -0,0 +1,91 @@
++"""
++Test different approaches to fixing the SkyCoord __getattr__ issue.
++"""
++
++
++class BaseCoordApproach1:
++    """Approach 1: Raise plain AttributeError for properties."""
++    
++    def __init__(self, value):
++        self.value = value
++    
++    def __getattr__(self, attr):
++        # Check if the attribute is a property/method defined on the class
++        for cls in type(self).__mro__:
++            if attr in cls.__dict__:
++                descriptor = cls.__dict__[attr]
++                if isinstance(descriptor, (property, classmethod, staticmethod)):
++                    # Raise plain AttributeError - standard signal for "not found"
++                    raise AttributeError(attr)
++        
++        # Custom error for truly missing attributes
++        raise AttributeError(
++            f"'{self.__class__.__name__}' object has no attribute '{attr}'"
++        )
++
++
++class CustomCoordApproach1(BaseCoordApproach1):
++    @property
++    def prop(self):
++        return self.random_attr
++
++
++print("=" * 60)
++print("Approach 1: Raise plain AttributeError for properties")
++print("=" * 60)
++
++c = CustomCoordApproach1('test')
++try:
++    result = c.prop
++except AttributeError as e:
++    print(f"AttributeError: {e}")
++    print(f"Args: {e.args}")
++    print()
++
++
++# Approach 2: Use __getattribute__ instead (more expensive but more control)
++class BaseCoordApproach2:
++    """Approach 2: Use __getattribute__ for more control."""
++    
++    def __init__(self, value):
++        self.value = value
++    
++    def __getattribute__(self, attr):
++        # Check if this is a property access
++        for cls in type(self).__mro__:
++            if attr in cls.__dict__:
++                descriptor = cls.__dict__[attr]
++                if isinstance(descriptor, property):
++                    # Use object.__getattribute__ to bypass our custom logic
++                    # This allows the property to work normally and propagate errors
++                    return object.__getattribute__(self, attr)
++        
++        # For everything else, use normal attribute access
++        try:
++            return object.__getattribute__(self, attr)
++        except AttributeError:
++            # Custom error for truly missing attributes
++            raise AttributeError(
++                f"'{self.__class__.__name__}' object has no attribute '{attr}'"
++            )
++
++
++class CustomCoordApproach2(BaseCoordApproach2):
++    @property
++    def prop(self):
++        return self.random_attr
++
++
++print("=" * 60)
++print("Approach 2: Use __getattribute__ for property handling")
++print("=" * 60)
++
++c = CustomCoordApproach2('test')
++try:
++    result = c.prop
++except AttributeError as e:
++    print(f"AttributeError: {e}")
++    if 'random_attr' in str(e):
++        print("SUCCESS: Error correctly mentions 'random_attr'!")
++    else:
++        print("FAILURE: Error still mentions wrong attribute")
+diff --git a/test_bug_repro.py b/test_bug_repro.py
+new file mode 100644
+index 0000000..37ad1a8
+--- /dev/null
++++ b/test_bug_repro.py
+@@ -0,0 +1,18 @@
++import astropy.coordinates as coord
++
++
++class custom_coord(coord.SkyCoord):
++    @property
++    def prop(self):
++        return self.random_attr
++
++
++c = custom_coord('00h42m30s', '+41d12m00s', frame='icrs')
++print("Accessing c.prop...")
++try:
++    result = c.prop
++    print(f"Result: {result}")
++except AttributeError as e:
++    print(f"AttributeError: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_debug.py b/test_debug.py
+new file mode 100644
+index 0000000..1cc6572
+--- /dev/null
++++ b/test_debug.py
+@@ -0,0 +1,49 @@
++"""
++Debug version to understand the exact flow of attribute access.
++"""
++
++
++class BaseCoord:
++    """Simplified version of SkyCoord's __getattr__ behavior."""
++    
++    def __init__(self, value):
++        self.value = value
++    
++    def __getattr__(self, attr):
++        """Simulates SkyCoord's __getattr__ - handles frame transformations."""
++        print(f"  __getattr__ called with attr='{attr}'")
++        
++        # Simulate checking for frame attributes
++        if attr == 'galactic':
++            return f"Transformed to galactic: {self.value}"
++        
++        # Fail with generic error
++        raise AttributeError(
++            f"'{self.__class__.__name__}' object has no attribute '{attr}'"
++        )
++
++
++class CustomCoord(BaseCoord):
++    """Subclass with a property that accesses a non-existent attribute."""
++    
++    @property
++    def prop(self):
++        print(f"  prop getter called, accessing self.random_attr")
++        return self.random_attr  # This doesn't exist!
++
++
++# Test the issue
++print("=" * 60)
++print("Testing the bug:")
++print("=" * 60)
++
++c = CustomCoord('00h42m30s')
++print(f"Created CustomCoord: {c.value}")
++print(f"\nAccessing c.prop (which tries to access self.random_attr)...")
++print()
++
++try:
++    result = c.prop
++    print(f"Result: {result}")
++except AttributeError as e:
++    print(f"\nAttributeError raised: {e}")
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000..730722e
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,64 @@
++"""
++Test the fix for the SkyCoord __getattr__ issue.
++"""
++
++
++class BaseCoordFixed:
++    """Fixed version of SkyCoord's __getattr__ behavior."""
++    
++    def __init__(self, value):
++        self.value = value
++    
++    def __getattr__(self, attr):
++        """Fixed __getattr__ that properly handles properties."""
++        print(f"  __getattr__ called with attr='{attr}'")
++        
++        # Simulate checking for frame attributes
++        if attr == 'galactic':
++            return f"Transformed to galactic: {self.value}"
++        
++        # Check if the attribute is a property/method defined on the class
++        # If so, raise a standard AttributeError to allow proper error propagation
++        for cls in type(self).__mro__:
++            if attr in cls.__dict__:
++                descriptor = cls.__dict__[attr]
++                if isinstance(descriptor, (property, classmethod, staticmethod)):
++                    # Raise standard AttributeError - this allows Python to
++                    # properly propagate any AttributeError from inside the property
++                    raise AttributeError(attr)
++        
++        # Fail with custom error for truly missing attributes
++        raise AttributeError(
++            f"'{self.__class__.__name__}' object has no attribute '{attr}'"
++        )
++
++
++class CustomCoordFixed(BaseCoordFixed):
++    """Subclass with a property that accesses a non-existent attribute."""
++    
++    @property
++    def prop(self):
++        print(f"  prop getter called, accessing self.random_attr")
++        return self.random_attr  # This doesn't exist!
++
++
++# Test the fix
++print("=" * 60)
++print("Testing the FIX:")
++print("=" * 60)
++
++c = CustomCoordFixed('00h42m30s')
++print(f"Created CustomCoordFixed: {c.value}")
++print(f"\nAccessing c.prop (which tries to access self.random_attr)...")
++print()
++
++try:
++    result = c.prop
++    print(f"Result: {result}")
++except AttributeError as e:
++    print(f"\nAttributeError raised: {e}")
++    print()
++    if 'random_attr' in str(e):
++        print("SUCCESS: Error correctly mentions 'random_attr'!")
++    else:
++        print("FAILURE: Error still mentions wrong attribute")
+diff --git a/test_fix_verification.py b/test_fix_verification.py
+new file mode 100644
+index 0000000..9dc531a
+--- /dev/null
++++ b/test_fix_verification.py
+@@ -0,0 +1,256 @@
++"""
++Standalone verification of the __getattribute__ fix for SkyCoord.
++
++This test mimics the SkyCoord behavior to verify the fix logic works correctly
++without requiring the full astropy build.
++"""
++
++
++class MockFrameTransformGraph:
++    """Mock frame transform graph for testing."""
++    frame_attributes = {'distance', 'pm_ra', 'pm_dec', 'radial_velocity'}
++    
++    @staticmethod
++    def lookup_name(attr):
++        return None
++
++
++frame_transform_graph = MockFrameTransformGraph()
++
++
++class MockFrame:
++    """Mock frame for testing."""
++    frame_attributes = {'distance'}
++    
++    def __init__(self):
++        self.distance = None
++    
++    def is_transformable_to(self, cls):
++        return False
++
++
++class SkyCoordFixed:
++    """
++    Fixed version of SkyCoord with proper __getattribute__ handling.
++    
++    This implements the fix for the issue where subclassing SkyCoord and
++    adding properties that access non-existent attributes gives misleading
++    error messages.
++    """
++    
++    def __init__(self, ra, dec, frame='icrs'):
++        self._sky_coord_frame = MockFrame()
++        self.ra = ra
++        self.dec = dec
++        self.frame = self._sky_coord_frame
++    
++    def _is_name(self, attr):
++        return False
++    
++    def transform_to(self, frame):
++        return self
++    
++    def __getattribute__(self, attr):
++        """
++        Overrides getattribute to properly handle property access in subclasses.
++
++        This ensures that when a property in a subclass raises an AttributeError
++        (e.g., when accessing a non-existent attribute), the error message
++        correctly identifies the missing attribute rather than the property name.
++        """
++        # Check if this is a property access on this class or its subclasses
++        for cls in type(self).__mro__:
++            if attr in cls.__dict__:
++                descriptor = cls.__dict__[attr]
++                if isinstance(descriptor, property):
++                    # Call the property getter directly and catch AttributeError
++                    try:
++                        return descriptor.fget(self)
++                    except AttributeError as e:
++                        # Store the original error info for __getattr__ to retrieve
++                        object.__setattr__(self, '_last_attr_error', (attr, e))
++                        # Raise a plain AttributeError to signal property access
++                        raise AttributeError()
++
++        # For everything else, use normal attribute access
++        try:
++            return object.__getattribute__(self, attr)
++        except AttributeError:
++            # Delegate to __getattr__ for custom handling
++            return self.__getattr__(attr)
++
++    def __getattr__(self, attr):
++        """
++        Overrides getattr to return coordinates that this can be transformed
++        to, based on the alias attr in the primary transform graph.
++        """
++        # Check if this is a property that raised AttributeError from its getter
++        # In this case, __getattribute__ stored the original error for us to retrieve
++        for cls in type(self).__mro__:
++            if attr in cls.__dict__:
++                descriptor = cls.__dict__[attr]
++                if isinstance(descriptor, property):
++                    # Check if we have stored error info from __getattribute__
++                    try:
++                        last_error = object.__getattribute__(self, '_last_attr_error')
++                    except AttributeError:
++                        last_error = None
++                    if last_error and last_error[0] == attr:
++                        # Re-raise the original error from the property getter
++                        raise last_error[1]
++                    # Plain AttributeError - property exists but failed
++                    raise AttributeError()
++
++        if "_sky_coord_frame" in self.__dict__:
++            if self._is_name(attr):
++                return self
++
++            if attr in frame_transform_graph.frame_attributes:
++                if attr in self.frame.frame_attributes:
++                    return getattr(self.frame, attr)
++                else:
++                    return getattr(self, "_" + attr, None)
++
++            if not attr.startswith("_") and hasattr(self._sky_coord_frame, attr):
++                return getattr(self._sky_coord_frame, attr)
++
++            frame_cls = frame_transform_graph.lookup_name(attr)
++            if frame_cls is not None and self.frame.is_transformable_to(frame_cls):
++                return self.transform_to(attr)
++
++        # Fail
++        raise AttributeError(
++            f"'{self.__class__.__name__}' object has no attribute '{attr}'"
++        )
++
++
++class CustomCoord(SkyCoordFixed):
++    """Subclass with a property that accesses a non-existent attribute."""
++    
++    @property
++    def prop(self):
++        return self.random_attr  # This doesn't exist!
++
++
++class CustomCoordWithValidProperty(SkyCoordFixed):
++    """Subclass with a property that accesses a valid attribute."""
++    
++    @property
++    def ra_value(self):
++        return self.ra
++
++
++def test_property_accessing_nonexistent_attribute():
++    """Test that error message correctly identifies the missing attribute."""
++    print("\n" + "="*60)
++    print("Test 1: Property accessing non-existent attribute")
++    print("="*60)
++    
++    c = CustomCoord('00h42m30s', '+41d12m00s', frame='icrs')
++    
++    try:
++        _ = c.prop
++        print("FAIL: Expected AttributeError")
++        return False
++    except AttributeError as e:
++        error_msg = str(e)
++        print(f"AttributeError: {error_msg}")
++        
++        if 'random_attr' in error_msg:
++            print("PASS: Error correctly mentions 'random_attr'")
++            return True
++        else:
++            print("FAIL: Error does not mention 'random_attr'")
++            return False
++
++
++def test_property_accessing_valid_attribute():
++    """Test that valid property access works correctly."""
++    print("\n" + "="*60)
++    print("Test 2: Property accessing valid attribute")
++    print("="*60)
++    
++    c = CustomCoordWithValidProperty('00h42m30s', '+41d12m00s', frame='icrs')
++    
++    try:
++        ra_value = c.ra_value
++        print(f"ra_value = {ra_value}")
++        if ra_value == '00h42m30s':
++            print("PASS: Property access works correctly")
++            return True
++        else:
++            print("FAIL: Unexpected value")
++            return False
++    except Exception as e:
++        print(f"FAIL: Unexpected exception: {e}")
++        return False
++
++
++def test_normal_attribute_access():
++    """Test that normal attribute access still works."""
++    print("\n" + "="*60)
++    print("Test 3: Normal attribute access")
++    print("="*60)
++    
++    c = SkyCoordFixed('00h42m30s', '+41d12m00s', frame='icrs')
++    
++    try:
++        ra = c.ra
++        print(f"ra = {ra}")
++        if ra == '00h42m30s':
++            print("PASS: Normal attribute access works")
++            return True
++        else:
++            print("FAIL: Unexpected value")
++            return False
++    except Exception as e:
++        print(f"FAIL: Unexpected exception: {e}")
++        return False
++
++
++def test_nonexistent_attribute_error():
++    """Test that truly non-existent attributes give clear errors."""
++    print("\n" + "="*60)
++    print("Test 4: Non-existent attribute error message")
++    print("="*60)
++    
++    c = SkyCoordFixed('00h42m30s', '+41d12m00s', frame='icrs')
++    
++    try:
++        _ = c.nonexistent_attribute_xyz
++        print("FAIL: Expected AttributeError")
++        return False
++    except AttributeError as e:
++        error_msg = str(e)
++        print(f"AttributeError: {error_msg}")
++        
++        if 'nonexistent_attribute_xyz' in error_msg and 'SkyCoordFixed' in error_msg:
++            print("PASS: Error message is clear and informative")
++            return True
++        else:
++            print("FAIL: Error message is not clear")
++            return False
++
++
++if __name__ == '__main__':
++    print("\n" + "#"*60)
++    print("# Verification of SkyCoord __getattribute__ fix")
++    print("#"*60)
++    
++    results = []
++    results.append(test_property_accessing_nonexistent_attribute())
++    results.append(test_property_accessing_valid_attribute())
++    results.append(test_normal_attribute_access())
++    results.append(test_nonexistent_attribute_error())
++    
++    print("\n" + "#"*60)
++    print("# Summary")
++    print("#"*60)
++    passed = sum(results)
++    total = len(results)
++    print(f"Passed: {passed}/{total}")
++    
++    if passed == total:
++        print("\nAll tests passed! The fix works correctly.")
++    else:
++        print(f"\n{total - passed} test(s) failed.")
+diff --git a/test_minimal_repro.py b/test_minimal_repro.py
+new file mode 100644
+index 0000000..e53913c
+--- /dev/null
++++ b/test_minimal_repro.py
+@@ -0,0 +1,60 @@
++"""
++Minimal reproduction of the SkyCoord __getattr__ issue.
++
++The problem: When a property in a subclass tries to access a non-existent attribute,
++the __getattr__ method catches the AttributeError and re-raises it with the wrong
++attribute name (the property name instead of the actual missing attribute).
++"""
++
++
++class BaseCoord:
++    """Simplified version of SkyCoord's __getattr__ behavior."""
++    
++    def __init__(self, value):
++        self.value = value
++    
++    def __getattr__(self, attr):
++        """Simulates SkyCoord's __getattr__ - handles frame transformations."""
++        # Simulate checking for frame attributes
++        if attr == 'galactic':
++            return f"Transformed to galactic: {self.value}"
++        
++        # Fail with generic error
++        raise AttributeError(
++            f"'{self.__class__.__name__}' object has no attribute '{attr}'"
++        )
++
++
++class CustomCoord(BaseCoord):
++    """Subclass with a property that accesses a non-existent attribute."""
++    
++    @property
++    def prop(self):
++        return self.random_attr  # This doesn't exist!
++
++
++# Test the issue
++print("=" * 60)
++print("Testing the bug:")
++print("=" * 60)
++
++c = CustomCoord('00h42m30s')
++print(f"Created CustomCoord: {c.value}")
++print(f"\nAccessing c.prop (which tries to access self.random_attr)...")
++print()
++
++try:
++    result = c.prop
++    print(f"Result: {result}")
++except AttributeError as e:
++    print(f"AttributeError raised: {e}")
++    print()
++    print("BUG: The error says 'prop' doesn't exist, but it should say")
++    print("     'random_attr' doesn't exist!")
++
++print()
++print("=" * 60)
++print("Expected behavior:")
++print("=" * 60)
++print("The error should say: 'CustomCoord' object has no attribute 'random_attr'")
++print("Not: 'CustomCoord' object has no attribute 'prop'")

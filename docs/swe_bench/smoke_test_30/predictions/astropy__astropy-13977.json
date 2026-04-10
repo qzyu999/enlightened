@@ -1,0 +1,15 @@
+{
+  "instance_id": "astropy__astropy-13977",
+  "model_patch": "",
+  "model_name_or_path": "containerclaw-v1",
+  "saved_at": "2026-04-10T08:29:33.125415+00:00",
+  "patch_lines": 0,
+  "patch_bytes": 0,
+  "_metadata": {
+    "turns": 8,
+    "wall_clock_s": 719.9,
+    "repo": "astropy/astropy",
+    "base_commit": "5250b2442501e6c671c6b380536f1edb352602d1",
+    "timeout": 7200
+  }
+}

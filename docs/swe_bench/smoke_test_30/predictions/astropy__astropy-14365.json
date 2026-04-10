@@ -1,0 +1,15 @@
+{
+  "instance_id": "astropy__astropy-14365",
+  "model_patch": "diff --git a/astropy/io/ascii/qdp.py b/astropy/io/ascii/qdp.py\nindex 83a4f00..5f3a362 100644\n--- a/astropy/io/ascii/qdp.py\n+++ b/astropy/io/ascii/qdp.py\n@@ -60,7 +60,7 @@ def _line_type(line, delimiter=None):\n     ValueError: Unrecognized QDP line...\n     \"\"\"\n     _decimal_re = r\"[+-]?(\\d+(\\.\\d*)?|\\.\\d+)([eE][+-]?\\d+)?\"\n-    _command_re = r\"READ [TS]ERR(\\s+[0-9]+)+\"\n+    _command_re = r\"(?i)READ [TS]ERR(\\s+[0-9]+)+\"\n \n     sep = delimiter\n     if delimiter is None:\ndiff --git a/test_lowercase.qdp b/test_lowercase.qdp\nnew file mode 100644\nindex 0000000..5479bdc\n--- /dev/null\n+++ b/test_lowercase.qdp\n@@ -0,0 +1,2 @@\n+read serr 1 2 \n+1 0.5 1 0.5\n",
+  "model_name_or_path": "containerclaw-v1",
+  "saved_at": "2026-04-10T11:26:38.826526+00:00",
+  "patch_lines": 21,
+  "patch_bytes": 651,
+  "_metadata": {
+    "turns": 19,
+    "wall_clock_s": 2427.0,
+    "repo": "astropy/astropy",
+    "base_commit": "7269fa3e33e8d02485a647da91a5a2a60a06af61",
+    "timeout": 7200
+  }
+}

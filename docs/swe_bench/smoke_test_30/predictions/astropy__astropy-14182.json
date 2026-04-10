@@ -1,0 +1,15 @@
+{
+  "instance_id": "astropy__astropy-14182",
+  "model_patch": "diff --git a/astropy/io/ascii/rst.py b/astropy/io/ascii/rst.py\nindex abdeba8..78e42b7 100644\n--- a/astropy/io/ascii/rst.py\n+++ b/astropy/io/ascii/rst.py\n@@ -57,8 +57,8 @@ class RST(FixedWidth):\n     data_class = SimpleRSTData\n     header_class = SimpleRSTHeader\n \n-    def __init__(self):\n-        super().__init__(delimiter_pad=None, bookend=False)\n+    def __init__(self, header_rows=None):\n+        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)\n \n     def write(self, lines):\n         lines = super().write(lines)\ndiff --git a/astropy/io/ascii/tests/test_rst.py b/astropy/io/ascii/tests/test_rst.py\nindex 84d6fed..6dbb4a5 100644\n--- a/astropy/io/ascii/tests/test_rst.py\n+++ b/astropy/io/ascii/tests/test_rst.py\n@@ -185,3 +185,27 @@ Col1      Col2 Col3 Col4\n ==== ========= ==== ====\n \"\"\",\n     )\n+\n+\n+def test_write_header_rows():\n+    \"\"\"Write a table with header_rows parameter\"\"\"\n+    from astropy.table import QTable\n+    import astropy.units as u\n+\n+    tbl = QTable(\n+        {'wave': [350, 950] * u.nm, 'response': [0.7, 1.2] * u.count}\n+    )\n+    out = StringIO()\n+    ascii.write(tbl, out, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+    result = out.getvalue()\n+    lines = result.splitlines()\n+    # Check that we have header rows for both name and unit\n+    assert \"wave\" in lines[1]\n+    assert \"response\" in lines[1]\n+    assert \"nm\" in lines[2]\n+    assert \"ct\" in lines[2]  # count abbreviated to ct\n+    # Check data rows\n+    assert \"350.0\" in lines[3]\n+    assert \"0.7\" in lines[3]\n+    assert \"950.0\" in lines[4]\n+    assert \"1.2\" in lines[4]\n",
+  "model_name_or_path": "containerclaw-v1",
+  "saved_at": "2026-04-10T10:14:53.833343+00:00",
+  "patch_lines": 47,
+  "patch_bytes": 1605,
+  "_metadata": {
+    "turns": 8,
+    "wall_clock_s": 1875.4,
+    "repo": "astropy/astropy",
+    "base_commit": "a5917978be39d13cd90b517e1de4e7a539ffaa48",
+    "timeout": 7200
+  }
+}

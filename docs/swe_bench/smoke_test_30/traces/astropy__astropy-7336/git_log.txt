@@ -1,0 +1,2 @@
+0d2972b Fix quantity_input decorator for constructors with None return annotation
+732d89c Merge pull request #7199 from jehturner/issue_6819_part_2

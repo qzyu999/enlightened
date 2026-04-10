@@ -1,0 +1,15 @@
+{
+  "instance_id": "astropy__astropy-13579",
+  "session_id": "12d0eacb-3ab6-4207-bc3e-e6cc2de362dd",
+  "archived_at": "2026-04-10T02:17:28.994158+00:00",
+  "stats": {
+    "error": "No events fetched"
+  },
+  "extra": {
+    "turns": 4,
+    "wall_clock_s": 2090.0,
+    "repo": "astropy/astropy",
+    "base_commit": "0df94ff7097961e92fd7812036a24b145bc13ca8",
+    "timeout": 7200
+  }
+}

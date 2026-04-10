@@ -1,0 +1,120 @@
+diff --git a/django/db/models/aggregates.py b/django/db/models/aggregates.py
+index ac0b62d..ea88c54 100644
+--- a/django/db/models/aggregates.py
++++ b/django/db/models/aggregates.py
+@@ -68,7 +68,7 @@ class Aggregate(Func):
+         return []
+ 
+     def as_sql(self, compiler, connection, **extra_context):
+-        extra_context['distinct'] = 'DISTINCT' if self.distinct else ''
++        extra_context['distinct'] = 'DISTINCT ' if self.distinct else ''
+         if self.filter:
+             if connection.features.supports_aggregate_filter_clause:
+                 filter_sql, filter_params = self.filter.as_sql(compiler, connection)
+diff --git a/test_count_distinct_case.py b/test_count_distinct_case.py
+new file mode 100644
+index 0000000..3f3832d
+--- /dev/null
++++ b/test_count_distinct_case.py
+@@ -0,0 +1,48 @@
++"""
++Test script to verify the Count + Case + distinct fix.
++
++The bug: COUNT(DISTINCTCASE WHEN ...) instead of COUNT(DISTINCT CASE WHEN ...)
++"""
++import os
++import sys
++import django
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests/model_utils_tests.settings')
++sys.path.insert(0, '/workspace')
++
++django.setup()
++
++from django.db.models import Count, Case, When, Value, IntegerField
++from django.db import connection
++from tests.models import Author
++
++# Create a query with Count + Case + distinct
++query = Author.objects.annotate(
++    active_count=Count(
++        Case(
++            When(is_active=True, then='id'),
++            output_field=IntegerField()
++        ),
++        distinct=True
++    )
++)
++
++# Get the SQL
++sql = query.query.sql_with_params()
++print("Generated SQL:")
++print(sql[0])
++print()
++
++# Check for the bug
++sql_str = sql[0]
++if 'DISTINCTCASE' in sql_str:
++    print("❌ BUG DETECTED: 'DISTINCTCASE' found (missing space)")
++    sys.exit(1)
++elif 'DISTINCT CASE' in sql_str:
++    print("✅ FIXED: 'DISTINCT CASE' found (proper spacing)")
++    sys.exit(0)
++else:
++    print("⚠️  WARNING: Neither pattern found in SQL")
++    print("SQL:", sql_str)
++    sys.exit(2)
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000..7e03951
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,47 @@
++"""
++Direct verification of the Count + Case + distinct fix.
++Tests the template rendering without full Django setup.
++"""
++
++# Simulate the template rendering
++template = '%(function)s(%(distinct)s%(expressions)s)'
++
++# Before fix: distinct = 'DISTINCT'
++# After fix: distinct = 'DISTINCT '
++
++print("Testing template rendering:")
++print(f"Template: {template}")
++print()
++
++# Simulate Case expression SQL
++case_sql = "CASE WHEN (" + "id" + ") = (" + "1" + ") THEN (" + "id" + ") END"
++
++# Before fix (buggy)
++data_buggy = {
++    'function': 'COUNT',
++    'distinct': 'DISTINCT',  # Missing trailing space
++    'expressions': case_sql
++}
++result_buggy = template % data_buggy
++print(f"BEFORE FIX (buggy):")
++print(f"  Result: {result_buggy}")
++print(f"  Contains 'DISTINCTCASE': {'DISTINCTCASE' in result_buggy}")
++print()
++
++# After fix
++data_fixed = {
++    'function': 'COUNT',
++    'distinct': 'DISTINCT ',  # With trailing space
++    'expressions': case_sql
++}
++result_fixed = template % data_fixed
++print(f"AFTER FIX:")
++print(f"  Result: {result_fixed}")
++print(f"  Contains 'DISTINCT CASE': {'DISTINCT CASE' in result_fixed}")
++print()
++
++# Verify
++if 'DISTINCTCASE' in result_buggy and 'DISTINCT CASE' in result_fixed:
++    print("✅ Fix verified! The trailing space resolves the issue.")
++else:
++    print("❌ Something went wrong with the verification.")

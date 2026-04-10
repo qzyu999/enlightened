@@ -1,0 +1,16 @@
+{
+  "run_id": "smoke_test_30",
+  "model_name": "containerclaw-v1",
+  "dataset_name": "princeton-nlp/SWE-bench_Verified",
+  "total_instances": 30,
+  "started_at": "2026-04-10T08:17:33.247916+00:00",
+  "completed_at": "2026-04-10T22:26:03.608103+00:00",
+  "config_yaml_hash": "58e537bda5657216",
+  "environment": {
+    "python_version": "3.12.13 (main, Mar 28 2026, 08:17:28) [Clang 21.0.0 (clang-2100.0.123.102)]",
+    "platform": "macOS-26.3.2-arm64-arm-64bit",
+    "architecture": "arm64",
+    "containerclaw_git_sha": "c706a131a9757a11fc9df22e6b13ebc7790c148c",
+    "captured_at": "2026-04-10T08:17:33.268533+00:00"
+  }
+}

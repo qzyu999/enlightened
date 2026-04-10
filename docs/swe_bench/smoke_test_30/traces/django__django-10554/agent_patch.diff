@@ -1,0 +1,545 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index 1544beb..668673b 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -931,7 +931,8 @@ class QuerySet:
+         # Clear limits and ordering so they can be reapplied
+         clone.query.clear_ordering(True)
+         clone.query.clear_limits()
+-        clone.query.combined_queries = (self.query,) + tuple(qs.query for qs in other_qs)
++        # Clone the query objects to avoid mutating the original queries
++        clone.query.combined_queries = (self.query.clone(),) + tuple(qs.query.clone() for qs in other_qs)
+         clone.query.combinator = combinator
+         clone.query.combinator_all = all
+         return clone
+diff --git a/test_query_sharing.py b/test_query_sharing.py
+new file mode 100644
+index 0000000..adcf9ac
+--- /dev/null
++++ b/test_query_sharing.py
+@@ -0,0 +1,81 @@
++#!/usr/bin/env python
++"""
++Test to demonstrate the query object sharing bug in _combinator_query.
++
++The bug: When _combinator_query stores references to query objects instead of clones,
++modifying a derived queryset can mutate the original query objects.
++"""
++import os
++import sys
++import tempfile
++
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++import django
++from django.conf import settings
++
++if not settings.configured:
++    db_file = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
++    db_file.close()
++    
++    settings.configure(
++        DEBUG=True,
++        DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': db_file.name}},
++        INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++        USE_TZ=True,
++    )
++
++django.setup()
++
++from django.db import models, connection
++
++class Number(models.Model):
++    num = models.IntegerField()
++    class Meta:
++        app_label = 'test_app'
++
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Number)
++
++Number.objects.bulk_create([Number(num=i) for i in range(10)])
++
++print("=" * 70)
++print("Testing Query Object Sharing Bug")
++print("=" * 70)
++print()
++
++# Create base querysets
++qs1 = Number.objects.filter(num__in=[0, 1])
++qs2 = Number.objects.filter(num__in=[8, 9])
++
++print("Step 1: Check original query objects...")
++print(f"  qs1.query id: {id(qs1.query)}")
++print(f"  qs2.query id: {id(qs2.query)}")
++print(f"  qs1.query.order_by: {qs1.query.order_by}")
++print(f"  qs2.query.order_by: {qs2.query.order_by}")
++
++# Create union
++print("\nStep 2: Create union queryset...")
++union_qs = qs1.union(qs2)
++print(f"  union_qs.query.combined_queries[0] id: {id(union_qs.query.combined_queries[0])}")
++print(f"  union_qs.query.combined_queries[1] id: {id(union_qs.query.combined_queries[1])}")
++
++# Check if they're the same objects (bug) or different (fixed)
++print("\nStep 3: Check if query objects are shared...")
++shared_0 = id(union_qs.query.combined_queries[0]) == id(qs1.query)
++shared_1 = id(union_qs.query.combined_queries[1]) == id(qs2.query)
++print(f"  combined_queries[0] is qs1.query: {shared_0}")
++print(f"  combined_queries[1] is qs2.query: {shared_1}")
++
++if shared_0 or shared_1:
++    print("\n❌ BUG DETECTED: Query objects are shared (not cloned)!")
++    print("   This means modifications to derived querysets can corrupt originals.")
++else:
++    print("\n✅ FIXED: Query objects are properly cloned!")
++
++# Cleanup
++import os
++try:
++    os.unlink(db_file.name)
++except:
++    pass
+diff --git a/test_union_bug.py b/test_union_bug.py
+new file mode 100644
+index 0000000..a505274
+--- /dev/null
++++ b/test_union_bug.py
+@@ -0,0 +1,119 @@
++"""
++Reproduction test for Django ORM bug:
++Union queryset with ordering breaks on ordering with derived querysets
++
++Bug: When using .union() on querysets with ordering, then calling .order_by()
++(to clear ordering) on a derived queryset, the original queryset becomes 
++corrupted and throws "ORDER BY position X is not in select list" error.
++
++Root cause: In _combinator_query(), combined_queries stores references to
++the original query objects, not copies. When .order_by() is called on the
++union queryset, it mutates the original query objects.
++"""
++
++import os
++import sys
++import django
++
++# Setup Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            '__main__',
++        ],
++        USE_TZ=True,
++    )
++
++django.setup()
++
++from django.db import models
++from django.test import TestCase, TransactionTestCase
++
++# Define a simple model for testing
++class Dimension(models.Model):
++    name = models.CharField(max_length=100)
++    order = models.IntegerField(default=0)
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++def test_union_ordering_bug():
++    """Reproduce the bug where union queryset breaks after derived queryset ordering."""
++    
++    # Create tables
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(Dimension)
++    
++    # Create test data
++    Dimension.objects.bulk_create([
++        Dimension(name='boeksoort', order=1),
++        Dimension(name='grootboek', order=2),
++        Dimension(name='kenteken', order=3),
++        Dimension(name='activa', order=4),
++    ])
++    
++    print("=" * 60)
++    print("Testing Union QuerySet Ordering Bug")
++    print("=" * 60)
++    
++    # Get all IDs to verify data
++    all_ids = list(Dimension.objects.values_list('id', flat=True))
++    print(f"\nAll Dimension IDs: {all_ids}")
++    
++    # Create the union queryset with ordering on the second part
++    qs = (
++        Dimension.objects.filter(pk__in=[1, 2])
++        .union(Dimension.objects.filter(pk__in=[3, 4]).order_by('order'))
++    )
++    
++    print(f"\nOriginal union queryset (qs):")
++    print(f"  Query: {qs.query}")
++    print(f"  Result: {list(qs)}")
++    
++    # This should work fine
++    print(f"\nEvaluating qs again (should work):")
++    result1 = list(qs)
++    print(f"  Result: {result1}")
++    
++    # Now create a derived queryset with cleared ordering
++    print(f"\nCreating derived queryset with .order_by().values_list():")
++    derived_qs = qs.order_by().values_list('pk', flat=True)
++    print(f"  Derived queryset: {derived_qs}")
++    
++    # Evaluate the derived queryset
++    print(f"\nEvaluating derived queryset:")
++    derived_result = list(derived_qs)
++    print(f"  Result: {derived_result}")
++    
++    # Now try to evaluate the original queryset again
++    # This is where the bug manifests
++    print(f"\nEvaluating original qs again (THIS SHOULD FAIL WITH THE BUG):")
++    try:
++        result2 = list(qs)
++        print(f"  Result: {result2}")
++        print(f"\n✓ BUG NOT REPRODUCED - QuerySet still works!")
++    except Exception as e:
++        print(f"  ✗ ERROR: {type(e).__name__}: {e}")
++        print(f"\n✗ BUG REPRODUCED - Original queryset is corrupted!")
++        return False
++    
++    return True
++
++
++if __name__ == '__main__':
++    success = test_union_ordering_bug()
++    sys.exit(0 if success else 1)
+diff --git a/test_union_bug_standalone.py b/test_union_bug_standalone.py
+new file mode 100644
+index 0000000..bfba3e8
+--- /dev/null
++++ b/test_union_bug_standalone.py
+@@ -0,0 +1,126 @@
++#!/usr/bin/env python
++"""
++Minimal standalone test for Django ORM union ordering bug.
++
++Bug: When using .union() on querysets with ordering, then calling .order_by()
++(to clear ordering) on a derived queryset, the original queryset becomes 
++corrupted and throws "ORDER BY position X is not in select list" error.
++
++This test verifies the fix: cloning query objects in _combinator_query.
++"""
++import os
++import sys
++import tempfile
++import sqlite3
++
++# Setup minimal Django configuration
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++import django
++from django.conf import settings
++
++if not settings.configured:
++    # Create a temporary database file
++    db_file = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
++    db_file.close()
++    
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': db_file.name,
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_TZ=True,
++    )
++
++django.setup()
++
++# Now import Django models after setup
++from django.db import models, connection
++from django.core.management.color import no_style
++
++# Create the Number model dynamically
++class Number(models.Model):
++    num = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the database table
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Number)
++
++# Insert test data
++Number.objects.bulk_create([Number(num=i) for i in range(10)])
++
++print("=" * 70)
++print("Testing Django ORM Union Ordering Bug Fix")
++print("=" * 70)
++print()
++
++try:
++    # Create a union queryset WITHOUT ordering in the parts
++    print("Step 1: Creating union queryset...")
++    qs = (
++        Number.objects.filter(num__in=[0, 1])
++        .union(Number.objects.filter(num__in=[8, 9]))
++    )
++    print("  ✓ Union queryset created")
++    
++    # Evaluate the original queryset - should work
++    print("\nStep 2: Evaluating original queryset...")
++    result1 = list(qs)
++    print(f"  ✓ Got {len(result1)} results: {[r.num for r in result1]}")
++    
++    # Create a derived queryset with cleared ordering
++    print("\nStep 3: Creating derived queryset with cleared ordering...")
++    derived_qs = qs.order_by().values_list('num', flat=True)
++    print("  ✓ Derived queryset created")
++    
++    # Evaluate the derived queryset
++    print("\nStep 4: Evaluating derived queryset...")
++    derived_result = list(derived_qs)
++    print(f"  ✓ Got {len(derived_result)} results: {list(derived_result)}")
++    
++    # Evaluate the original queryset again - this is where the bug manifests
++    print("\nStep 5: Evaluating original queryset again (BUG TEST)...")
++    result2 = list(qs)
++    print(f"  ✓ Got {len(result2)} results: {[r.num for r in result2]}")
++    
++    # Verify the results are consistent
++    print("\nStep 6: Verifying results consistency...")
++    assert sorted(r.num for r in result1) == sorted(r.num for r in result2), \
++        "Results are inconsistent!"
++    print("  ✓ Results are consistent")
++    
++    # Test repr() as well
++    print("\nStep 7: Testing repr() on original queryset...")
++    repr_str = repr(qs)
++    print(f"  ✓ repr() works: {repr_str[:80]}...")
++    
++    print("\n" + "=" * 70)
++    print("✅ ALL TESTS PASSED - Bug is FIXED!")
++    print("=" * 70)
++    
++except Exception as e:
++    print("\n" + "=" * 70)
++    print("❌ TEST FAILED - Bug still exists!")
++    print("=" * 70)
++    print(f"\nError: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
++    sys.exit(1)
++finally:
++    # Cleanup
++    import os
++    if 'db_file' in locals():
++        try:
++            os.unlink(db_file.name)
++        except:
++            pass
+diff --git a/test_union_fix.py b/test_union_fix.py
+new file mode 100644
+index 0000000..c80eb40
+--- /dev/null
++++ b/test_union_fix.py
+@@ -0,0 +1,96 @@
++#!/usr/bin/env python
++"""
++Minimal test to verify the union ordering bug fix.
++"""
++import os
++import sys
++import django
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.settings')
++sys.path.insert(0, '/workspace')
++
++django.setup()
++
++from django.db import connection
++from django.test.utils import setup_test_environment, teardown_test_environment
++
++setup_test_environment()
++
++# Create test database
++from django.test.utils import get_runner
++from django.conf import settings
++
++TestRunner = get_runner(settings)
++test_runner = TestRunner(verbosity=1, interactive=False, keepdb=False)
++
++# Create tables
++old_name = connection.settings_dict['NAME']
++connection.creation.create_test_db(verbosity=1, autoclobber=True, keepdb=False)
++
++try:
++    from django.db import models
++    
++    # Define a simple model
++    class TestModel(models.Model):
++        value = models.IntegerField()
++        
++        class Meta:
++            app_label = 'test_app'
++            db_table = 'test_model'
++    
++    # Create table manually
++    with connection.cursor() as cursor:
++        cursor.execute('''
++            CREATE TABLE test_model (
++                id INTEGER PRIMARY KEY AUTOINCREMENT,
++                value INTEGER NOT NULL
++            )
++        ''')
++    
++    # Insert test data
++    with connection.cursor() as cursor:
++        for i in range(1, 20):
++            cursor.execute('INSERT INTO test_model (value) VALUES (%s)', (i,))
++    
++    connection.commit()
++    
++    # Now test the bug
++    print("\n=== Testing Union Ordering Bug Fix ===\n")
++    
++    # Create querysets
++    qs1 = TestModel.objects.filter(id__in=[10, 11])
++    qs2 = TestModel.objects.filter(id__in=[16, 17]).order_by('value')
++    
++    print(f"qs2 query before union: {qs2.query}")
++    print(f"qs2 order_by before union: {qs2.query.order_by}")
++    
++    # Create union
++    union_qs = qs1.union(qs2)
++    
++    print(f"\nqs2 query after union: {qs2.query}")
++    print(f"qs2 order_by after union: {qs2.query.order_by}")
++    
++    # Call order_by() on union - this should NOT affect qs2
++    derived_qs = union_qs.order_by().values_list('id', flat=True)
++    
++    print(f"\nqs2 query after derived_qs: {qs2.query}")
++    print(f"qs2 order_by after derived_qs: {qs2.query.order_by}")
++    
++    # Evaluate derived_qs
++    print(f"\nEvaluating derived_qs...")
++    result = list(derived_qs)
++    print(f"Result: {result}")
++    
++    # Check if qs2 is still intact
++    print(f"\nqs2 order_by after evaluating derived_qs: {qs2.query.order_by}")
++    
++    if qs2.query.order_by:
++        print("\n✓ SUCCESS: qs2 ordering preserved!")
++    else:
++        print("\n✗ FAILURE: qs2 ordering was cleared!")
++        
++finally:
++    # Cleanup
++    connection.creation.destroy_test_db(old_name, verbosity=1)
++    teardown_test_environment()
+diff --git a/tests/queries/test_union_ordering_bug.py b/tests/queries/test_union_ordering_bug.py
+new file mode 100644
+index 0000000..1a1f640
+--- /dev/null
++++ b/tests/queries/test_union_ordering_bug.py
+@@ -0,0 +1,79 @@
++"""
++Test for Django ORM bug: Union queryset with ordering breaks on ordering with derived querysets
++
++Bug: When using .union() on querysets with ordering, then calling .order_by()
++(to clear ordering) on a derived queryset, the original queryset becomes 
++corrupted and throws "ORDER BY position X is not in select list" error.
++"""
++
++from django.db.utils import ProgrammingError
++from django.test import TestCase, skipUnlessDBFeature
++
++from .models import Number, ReservedName
++
++
++@skipUnlessDBFeature('supports_select_union')
++class UnionOrderingBugTest(TestCase):
++    """Test for the bug where union queryset breaks after derived queryset ordering."""
++    
++    @classmethod
++    def setUpTestData(cls):
++        Number.objects.bulk_create(Number(num=i) for i in range(10))
++    
++    def test_union_with_ordering_not_corrupted_by_derived_queryset(self):
++        """
++        Regression test for: Union queryset with ordering breaks on ordering with derived querysets
++        
++        When a union queryset is created with ordering on one of the parts,
++        and then a derived queryset is created with .order_by() to clear ordering,
++        the original queryset should not be corrupted.
++        """
++        # Create a union queryset with ordering on the second part
++        qs = (
++            Number.objects.filter(num__in=[0, 1])
++            .union(Number.objects.filter(num__in=[8, 9]).order_by('num'))
++        )
++        
++        # Evaluate the original queryset - should work
++        result1 = list(qs)
++        self.assertEqual(len(result1), 4)
++        
++        # Create a derived queryset with cleared ordering
++        derived_qs = qs.order_by().values_list('num', flat=True)
++        
++        # Evaluate the derived queryset
++        derived_result = list(derived_qs)
++        self.assertEqual(len(derived_result), 4)
++        
++        # Evaluate the original queryset again - this should NOT fail
++        # This is where the bug manifests
++        result2 = list(qs)
++        self.assertEqual(len(result2), 4)
++        
++        # Verify the results are consistent
++        self.assertEqual(sorted(r.num for r in result1), sorted(r.num for r in result2))
++    
++    def test_union_with_ordering_repr_after_derived_queryset(self):
++        """
++        Test that repr() works on union queryset after creating derived queryset.
++        
++        This is the exact scenario from the bug report where repr(qs) fails
++        after qs.order_by().values_list() is called.
++        """
++        # Create a union queryset with ordering on the second part
++        qs = (
++            Number.objects.filter(num__in=[0, 1])
++            .union(Number.objects.filter(num__in=[8, 9]).order_by('num'))
++        )
++        
++        # repr should work initially
++        repr1 = repr(qs)
++        self.assertIn('Number', repr1)
++        
++        # Create a derived queryset with cleared ordering
++        derived_qs = qs.order_by().values_list('num', flat=True)
++        list(derived_qs)  # Evaluate it
++        
++        # repr should still work - this is where the bug manifests
++        repr2 = repr(qs)
++        self.assertIn('Number', repr2)

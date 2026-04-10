@@ -1,0 +1,1 @@
+a591797 Merge pull request #14172 from astropy/pre-commit-ci-update-config

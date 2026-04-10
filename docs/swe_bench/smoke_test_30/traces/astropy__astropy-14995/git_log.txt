@@ -1,0 +1,1 @@
+b16c7d1 Merge pull request #14988 from nstarman/cosmo-dont-register-abstract

@@ -1,0 +1,434 @@
+diff --git a/docs/test_design_itrs_observed.md b/docs/test_design_itrs_observed.md
+new file mode 100644
+index 0000000..d3109a9
+--- /dev/null
++++ b/docs/test_design_itrs_observed.md
+@@ -0,0 +1,323 @@
++# Test Case Design: ITRS to Observed Frame Transformations
++
++## Overview
++
++This document outlines comprehensive test cases for the ITRS to observed frame transformations (ITRS → CIRS → AltAz/HADec). The transformation chain already exists in the codebase, so these tests validate correctness, edge cases, and round-trip accuracy.
++
++## Existing Test Coverage
++
++The following tests already exist in `astropy/coordinates/tests/test_intermediate_transformations.py`:
++
++| Test Function | Coverage |
++|---------------|----------|
++| `test_cirs_to_altaz()` | CIRS ↔ AltAz round-trip |
++| `test_cirs_to_hadec()` | CIRS ↔ HADec round-trip |
++| `test_cirs_itrs()` | CIRS ↔ ITRS round-trip |
++| `test_gcrs_altaz()` | GCRS → ITRS → CIRS → AltAz path |
++| `test_gcrs_hadec()` | GCRS → ITRS → CIRS → HADec path |
++
++## Test Gaps Identified
++
++1. **Direct ITRS → AltAz/HADec round-trip tests** (not just through GCRS)
++2. **Edge case coverage** (poles, equator, zenith, horizon)
++3. **Different observation times and locations**
++4. **Atmospheric refraction validation**
++5. **Spherical vs cartesian representation tests**
++
++---
++
++## Proposed Test Cases
++
++### 1. Basic Transformation Tests
++
++#### Test 1.1: ITRS → AltAz Round-Trip
++```python
++def test_itrs_to_altaz_roundtrip():
++    """Test basic ITRS → AltAz → ITRS round-trip transformation."""
++    from astropy.coordinates import EarthLocation
++    
++    obstime = Time('2020-01-01T00:00:00', scale='utc')
++    location = EarthLocation(lat=51.4769*u.deg, lon=0*u.deg, height=0*u.m)
++    
++    # Create ITRS coordinate (point on Earth's surface)
++    itrs_coord = ITRS(x=6371000*u.m, y=0*u.m, z=0*u.m, obstime=obstime)
++    
++    # Transform to AltAz
++    altaz_frame = AltAz(obstime=obstime, location=location)
++    altaz_coord = itrs_coord.transform_to(altaz_frame)
++    
++    # Transform back to ITRS
++    itrs_roundtrip = altaz_coord.transform_to(ITRS(obstime=obstime))
++    
++    # Verify round-trip accuracy (within numerical precision)
++    assert_allclose(itrs_coord.cartesian.xyz, itrs_roundtrip.cartesian.xyz, rtol=1e-10)
++```
++
++#### Test 1.2: ITRS → HADec Round-Trip
++```python
++def test_itrs_to_hadec_roundtrip():
++    """Test basic ITRS → HADec → ITRS round-trip transformation."""
++    from astropy.coordinates import EarthLocation
++    
++    obstime = Time('2020-01-01T00:00:00', scale='utc')
++    location = EarthLocation(lat=51.4769*u.deg, lon=0*u.deg, height=0*u.m)
++    
++    itrs_coord = ITRS(x=6371000*u.m, y=0*u.m, z=0*u.m, obstime=obstime)
++    
++    hadec_frame = HADec(obstime=obstime, location=location)
++    hadec_coord = itrs_coord.transform_to(hadec_frame)
++    
++    itrs_roundtrip = hadec_coord.transform_to(ITRS(obstime=obstime))
++    
++    assert_allclose(itrs_coord.cartesian.xyz, itrs_roundtrip.cartesian.xyz, rtol=1e-10)
++```
++
++---
++
++### 2. Edge Cases
++
++#### Test 2.1: North Pole Observer
++```python
++def test_itrs_to_altaz_north_pole():
++    """Test transformation with observer at North Pole."""
++    obstime = Time('2020-01-01T00:00:00', scale='utc')
++    location = EarthLocation(lat=90*u.deg, lon=0*u.deg, height=0*u.m)
++    
++    # Point directly above the pole
++    itrs_coord = ITRS(x=0*u.m, y=0*u.m, z=6371000*u.m, obstime=obstime)
++    
++    altaz_frame = AltAz(obstime=obstime, location=location)
++    altaz_coord = itrs_coord.transform_to(altaz_frame)
++    
++    # At the pole, zenith should be at altitude ~90 degrees
++    assert_allclose(altaz_coord.alt, 90*u.deg, atol=1*u.arcsec)
++```
++
++#### Test 2.2: Equator Observer
++```python
++def test_itrs_to_altaz_equator():
++    """Test transformation with observer at equator."""
++    obstime = Time('2020-01-01T00:00:00', scale='utc')
++    location = EarthLocation(lat=0*u.deg, lon=0*u.deg, height=0*u.m)
++    
++    # Point on equator at same longitude
++    itrs_coord = ITRS(x=6371000*u.m, y=0*u.m, z=0*u.m, obstime=obstime)
++    
++    altaz_frame = AltAz(obstime=obstime, location=location)
++    altaz_coord = itrs_coord.transform_to(altaz_frame)
++    
++    # Should be at zenith (altitude ~90 degrees)
++    assert_allclose(altaz_coord.alt, 90*u.deg, atol=1*u.arcsec)
++```
++
++#### Test 2.3: Zenith Point
++```python
++def test_itrs_to_altaz_zenith():
++    """Test transformation of a point at observer's zenith."""
++    obstime = Time('2020-01-01T00:00:00', scale='utc')
++    location = EarthLocation(lat=45*u.deg, lon=0*u.deg, height=100*u.m)
++    
++    # Calculate ITRS coordinates for zenith point
++    from astropy.coordinates import AltAz
++    zenith_altaz = AltAz(alt=90*u.deg, az=0*u.deg, obstime=obstime, location=location)
++    zenith_itrs = zenith_altaz.transform_to(ITRS(obstime=obstime))
++    
++    # Transform back and verify
++    zenith_altaz_roundtrip = zenith_itrs.transform_to(AltAz(obstime=obstime, location=location))
++    assert_allclose(zenith_altaz.alt, zenith_altaz_roundtrip.alt, atol=1*u.arcsec)
++```
++
++#### Test 2.4: Horizon Point
++```python
++def test_itrs_to_altaz_horizon():
++    """Test transformation of a point on the horizon."""
++    obstime = Time('2020-01-01T00:00:00', scale='utc')
++    location = EarthLocation(lat=45*u.deg, lon=0*u.deg, height=0*u.m)
++    
++    # Point on horizon (altitude = 0)
++    horizon_altaz = AltAz(alt=0*u.deg, az=90*u.deg, obstime=obstime, location=location)
++    horizon_itrs = horizon_altaz.transform_to(ITRS(obstime=obstime))
++    
++    # Transform back and verify
++    horizon_altaz_roundtrip = horizon_itrs.transform_to(AltAz(obstime=obstime, location=location))
++    assert_allclose(horizon_altaz.alt, horizon_altaz_roundtrip.alt, atol=1*u.arcmin)
++```
++
++---
++
++### 3. Different Observation Times and Locations
++
++#### Test 3.1: Multiple Observation Times
++```python
++def test_itrs_to_altaz_multiple_times():
++    """Test transformation with multiple observation times."""
++    from astropy.coordinates import EarthLocation
++    
++    times = Time(['2020-01-01T00:00:00', '2020-06-01T12:00:00', '2020-12-31T23:59:59'], scale='utc')
++    location = EarthLocation(lat=51.4769*u.deg, lon=0*u.deg, height=0*u.m)
++    
++    itrs_coord = ITRS(x=6371000*u.m, y=0*u.m, z=0*u.m, obstime=times)
++    
++    altaz_frame = AltAz(obstime=times, location=location)
++    altaz_coords = itrs_coord.transform_to(altaz_frame)
++    
++    # Verify all transformations succeeded
++    assert len(altaz_coords.alt) == 3
++    
++    # Round-trip test
++    itrs_roundtrip = altaz_coords.transform_to(ITRS(obstime=times))
++    assert_allclose(itrs_coord.cartesian.xyz, itrs_roundtrip.cartesian.xyz, rtol=1e-10)
++```
++
++#### Test 3.2: Multiple Locations
++```python
++def test_itrs_to_altaz_multiple_locations():
++    """Test transformation from multiple observer locations."""
++    obstime = Time('2020-01-01T00:00:00', scale='utc')
++    
++    locations = [
++        EarthLocation(lat=51.4769*u.deg, lon=0*u.deg, height=0*u.m),      # Greenwich
++        EarthLocation(lat=-33.4*u.deg, lon=151.2*u.deg, height=0*u.m),    # Sydney
++        EarthLocation(lat=40.7*u.deg, lon=-74.0*u.deg, height=0*u.m),     # New York
++    ]
++    
++    itrs_coord = ITRS(x=6371000*u.m, y=0*u.m, z=0*u.m, obstime=obstime)
++    
++    for location in locations:
++        altaz_frame = AltAz(obstime=obstime, location=location)
++        altaz_coord = itrs_coord.transform_to(altaz_frame)
++        
++        # Each location should give different results
++        assert altaz_coord.az is not None
++        assert altaz_coord.alt is not None
++```
++
++---
++
++### 4. Representation Tests
++
++#### Test 4.1: Spherical Representation
++```python
++def test_itrs_to_altaz_spherical():
++    """Test ITRS → AltAz with spherical representation."""
++    from astropy.coordinates import EarthLocation, SphericalRepresentation
++    
++    obstime = Time('2020-01-01T00:00:00', scale='utc')
++    location = EarthLocation(lat=51.4769*u.deg, lon=0*u.deg, height=0*u.m)
++    
++    # Create ITRS with spherical representation
++    sph_repr = SphericalRepresentation(lon=0*u.deg, lat=0*u.deg, distance=6371000*u.m)
++    itrs_coord = ITRS(sph_repr, obstime=obstime, representation_type=SphericalRepresentation)
++    
++    altaz_frame = AltAz(obstime=obstime, location=location)
++    altaz_coord = itrs_coord.transform_to(altaz_frame)
++    
++    # Round-trip
++    itrs_roundtrip = altaz_coord.transform_to(ITRS(obstime=obstime))
++    assert_allclose(itrs_coord.spherical.lon, itrs_roundtrip.spherical.lon, rtol=1e-10)
++```
++
++#### Test 4.2: Cartesian Representation
++```python
++def test_itrs_to_altaz_cartesian():
++    """Test ITRS → AltAz with cartesian representation."""
++    from astropy.coordinates import EarthLocation, CartesianRepresentation
++    
++    obstime = Time('2020-01-01T00:00:00', scale='utc')
++    location = EarthLocation(lat=51.4769*u.deg, lon=0*u.deg, height=0*u.m)
++    
++    # Create ITRS with cartesian representation
++    cart_repr = CartesianRepresentation(6371000*u.m, 0*u.m, 0*u.m)
++    itrs_coord = ITRS(cart_repr, obstime=obstime, representation_type=CartesianRepresentation)
++    
++    altaz_frame = AltAz(obstime=obstime, location=location)
++    altaz_coord = itrs_coord.transform_to(altaz_frame)
++    
++    # Round-trip
++    itrs_roundtrip = altaz_coord.transform_to(ITRS(obstime=obstime))
++    assert_allclose(itrs_coord.cartesian.xyz, itrs_roundtrip.cartesian.xyz, rtol=1e-10)
++```
++
++---
++
++### 5. Atmospheric Refraction Tests
++
++#### Test 5.1: Refraction On vs Off
++```python
++def test_itrs_to_altaz_refraction():
++    """Test that atmospheric refraction affects altitude near horizon."""
++    from astropy.coordinates import EarthLocation
++    
++    obstime = Time('2020-01-01T00:00:00', scale='utc')
++    location = EarthLocation(lat=45*u.deg, lon=0*u.deg, height=0*u.m)
++    
++    # Point near horizon
++    horizon_altaz = AltAz(alt=5*u.deg, az=90*u.deg, obstime=obstime, location=location)
++    horizon_itrs = horizon_altaz.transform_to(ITRS(obstime=obstime))
++    
++    # Transform back with refraction on (default)
++    altaz_with_refraction = horizon_itrs.transform_to(AltAz(obstime=obstime, location=location))
++    
++    # Transform back with refraction off
++    altaz_no_refraction = horizon_itrs.transform_to(
++        AltAz(obstime=obstime, location=location, pressure=0*u.Pa, temperature=0*u.K)
++    )
++    
++    # Refraction should cause a difference in altitude
++    alt_diff = abs(altaz_with_refraction.alt - altaz_no_refraction.alt)
++    assert alt_diff > 0.1*u.arcmin  # Refraction effect should be visible
++```
++
++---
++
++### 6. Accuracy Tests
++
++#### Test 6.1: Golden Spiral Grid Coverage
++```python
++def test_itrs_to_altaz_golden_spiral():
++    """Test ITRS → AltAz → ITRS round-trip over golden spiral grid."""
++    from astropy.coordinates import EarthLocation
++    from astropy.coordinates.angle_utilities import golden_spiral_grid
++    
++    obstime = Time('2020-01-01T00:00:00', scale='utc')
++    location = EarthLocation(lat=51.4769*u.deg, lon=0*u.deg, height=0*u.m)
++    
++    # Generate points on a sphere
++    usph = golden_spiral_grid(1000)
++    dist = 6371000 * u.m  # Earth's radius
++    
++    # Create ITRS coordinates
++    itrs_coords = ITRS(usph, obstime=obstime, distance=dist)
++    
++    # Transform to AltAz and back
++    altaz_frame = AltAz(obstime=obstime, location=location)
++    altaz_coords = itrs_coords.transform_to(altaz_frame)
++    itrs_roundtrip = altaz_coords.transform_to(ITRS(obstime=obstime))
++    
++    # Verify round-trip accuracy
++    assert_allclose(itrs_coords.cartesian.xyz, itrs_roundtrip.cartesian.xyz, rtol=1e-10)
++```
++
++---
++
++## Summary
++
++| Category | Tests | Status |
++|----------|-------|--------|
++| Basic Transformations | 2 | Proposed |
++| Edge Cases | 4 | Proposed |
++| Multiple Times/Locations | 2 | Proposed |
++| Representations | 2 | Proposed |
++| Atmospheric Refraction | 1 | Proposed |
++| Accuracy | 1 | Proposed |
++| **Total** | **12** | **Proposed** |
++
++## Recommendations
++
++1. Add these tests to `astropy/coordinates/tests/test_intermediate_transformations.py`
++2. Consider creating a dedicated test file `test_itrs_observed_transformations.py` if the test suite grows
++3. Run existing tests to ensure no regressions:
++   ```bash
++   pytest astropy/coordinates/tests/test_intermediate_transformations.py -v
++   ```
++4. Verify ERFA library version compatibility for refraction calculations
+diff --git a/test_itrs_observed.py b/test_itrs_observed.py
+new file mode 100644
+index 0000000..3c07b70
+--- /dev/null
++++ b/test_itrs_observed.py
+@@ -0,0 +1,99 @@
++#!/usr/bin/env python
++"""Test ITRS to observed frame transformations."""
++
++from astropy.coordinates import ITRS, AltAz, EarthLocation
++from astropy.time import Time
++from astropy import units as u
++import numpy as np
++
++def test_itrs_to_altaz():
++    """Test transforming from ITRS to AltAz."""
++    
++    # Create an observation time
++    obstime = Time('2020-01-01T00:00:00', scale='utc')
++    
++    # Create an observer location (Greenwich)
++    location = EarthLocation(lat=51.4769*u.deg, lon=0*u.deg, height=0*u.m)
++    
++    # Create an ITRS coordinate (a point on Earth's surface)
++    itrs_coord = ITRS(
++        x=6371000*u.m,
++        y=0*u.m,
++        z=0*u.m,
++        obstime=obstime
++    )
++    
++    print(f"ITRS coordinate: {itrs_coord}")
++    
++    # Create target AltAz frame
++    altaz_frame = AltAz(obstime=obstime, location=location)
++    
++    print(f"Target AltAz frame: {altaz_frame}")
++    
++    # Try to transform
++    try:
++        altaz_coord = itrs_coord.transform_to(altaz_frame)
++        print(f"AltAz coordinate: {altaz_coord}")
++        print(f"Azimuth: {altaz_coord.az}")
++        print(f"Altitude: {altaz_coord.alt}")
++        print("\n✅ SUCCESS: ITRS to AltAz transformation works!")
++        return True
++    except Exception as e:
++        print(f"\n❌ FAILED: {type(e).__name__}: {e}")
++        import traceback
++        traceback.print_exc()
++        return False
++
++def test_itrs_to_hadec():
++    """Test transforming from ITRS to HADec."""
++    
++    from astropy.coordinates import HADec
++    
++    # Create an observation time
++    obstime = Time('2020-01-01T00:00:00', scale='utc')
++    
++    # Create an observer location (Greenwich)
++    location = EarthLocation(lat=51.4769*u.deg, lon=0*u.deg, height=0*u.m)
++    
++    # Create an ITRS coordinate
++    itrs_coord = ITRS(
++        x=6371000*u.m,
++        y=0*u.m,
++        z=0*u.m,
++        obstime=obstime
++    )
++    
++    print(f"\nITRS coordinate: {itrs_coord}")
++    
++    # Create target HADec frame
++    hadec_frame = HADec(obstime=obstime, location=location)
++    
++    print(f"Target HADec frame: {hadec_frame}")
++    
++    # Try to transform
++    try:
++        hadec_coord = itrs_coord.transform_to(hadec_frame)
++        print(f"HADec coordinate: {hadec_coord}")
++        print(f"Hour angle: {hadec_coord.hourangle}")
++        print(f"Declination: {hadec_coord.dec}")
++        print("\n✅ SUCCESS: ITRS to HADec transformation works!")
++        return True
++    except Exception as e:
++        print(f"\n❌ FAILED: {type(e).__name__}: {e}")
++        import traceback
++        traceback.print_exc()
++        return False
++
++if __name__ == '__main__':
++    print("=" * 60)
++    print("Testing ITRS to Observed Frame Transformations")
++    print("=" * 60)
++    
++    result1 = test_itrs_to_altaz()
++    result2 = test_itrs_to_hadec()
++    
++    print("\n" + "=" * 60)
++    print("Summary:")
++    print(f"  ITRS → AltAz: {'PASS' if result1 else 'FAIL'}")
++    print(f"  ITRS → HADec: {'PASS' if result2 else 'FAIL'}")
++    print("=" * 60)

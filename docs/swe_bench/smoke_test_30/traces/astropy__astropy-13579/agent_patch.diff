@@ -1,0 +1,424 @@
+diff --git a/astropy/wcs/wcsapi/wrappers/sliced_wcs.py b/astropy/wcs/wcsapi/wrappers/sliced_wcs.py
+index d7605b0..5fd6b79 100644
+--- a/astropy/wcs/wcsapi/wrappers/sliced_wcs.py
++++ b/astropy/wcs/wcsapi/wrappers/sliced_wcs.py
+@@ -251,7 +251,23 @@ class SlicedLowLevelWCS(BaseWCSWrapper):
+                 iworld_curr += 1
+                 world_arrays_new.append(world_arrays[iworld_curr])
+             else:
+-                world_arrays_new.append(1.)
++                # For dropped world dimensions, we need to compute the world coordinate
++                # value that corresponds to the slice position. We cannot simply use
++                # a hardcoded value (like 1.) because the WCS may have coupled dimensions
++                # where the world coordinates are interdependent.
++                # Find which pixel dimension was sliced to produce this dropped world dim
++                for ipixel in range(self._wcs.pixel_n_dim):
++                    if isinstance(self._slices_pixel[ipixel], numbers.Integral):
++                        # This pixel dimension was sliced - compute the world coordinate
++                        # for this slice position using pixel_to_world_values
++                        pixel_values = [0] * self._wcs.pixel_n_dim
++                        pixel_values[ipixel] = self._slices_pixel[ipixel]
++                        world_coords = self._wcs.pixel_to_world_values(*pixel_values)
++                        world_arrays_new.append(world_coords[iworld])
++                        break
++                else:
++                    # Fallback: this shouldn't normally happen, but use 1. as before
++                    world_arrays_new.append(1.)
+ 
+         world_arrays_new = np.broadcast_arrays(*world_arrays_new)
+         pixel_arrays = list(self._wcs.world_to_pixel_values(*world_arrays_new))
+diff --git a/test_bug_reproduction.py b/test_bug_reproduction.py
+new file mode 100644
+index 0000000..84ac8c6
+--- /dev/null
++++ b/test_bug_reproduction.py
+@@ -0,0 +1,49 @@
++import numpy as np
++import astropy.wcs
++from astropy.coordinates import SkyCoord
++import astropy.units as u
++
++nx = 100
++ny = 25
++nz = 2
++wcs_header = {
++    'WCSAXES': 3,
++    'CRPIX1': (nx + 1)/2,
++    'CRPIX2': (ny + 1)/2,
++    'CRPIX3': 1.0,
++    'PC1_1': 0.0,
++    'PC1_2': -1.0,
++    'PC1_3': 0.0,
++    'PC2_1': 1.0,
++    'PC2_2': 0.0,
++    'PC2_3': -1.0,
++    'CDELT1': 5,
++    'CDELT2': 5,
++    'CDELT3': 0.055,
++    'CUNIT1': 'arcsec',
++    'CUNIT2': 'arcsec',
++    'CUNIT3': 'Angstrom',
++    'CTYPE1': 'HPLN-TAN',
++    'CTYPE2': 'HPLT-TAN',
++    'CTYPE3': 'WAVE',
++    'CRVAL1': 0.0,
++    'CRVAL2': 0.0,
++    'CRVAL3': 1.05,
++
++}
++fits_wcs = astropy.wcs.WCS(header=wcs_header)
++
++print("Testing unsliced WCS:")
++pt = SkyCoord(Tx=0*u.arcsec, Ty=0*u.arcsec, frame=astropy.wcs.utils.wcs_to_celestial_frame(fits_wcs))
++result = fits_wcs.world_to_pixel(pt, 1.05*u.angstrom)
++print(f"world_to_pixel result: {result}")
++print(f"Expected: (49.5, 12.0, ~0)")
++
++print("\nTesting sliced WCS:")
++ll_sliced_wcs = astropy.wcs.wcsapi.SlicedLowLevelWCS(fits_wcs, 0)
++hl_sliced_wcs = astropy.wcs.wcsapi.HighLevelWCSWrapper(ll_sliced_wcs)
++result_sliced = hl_sliced_wcs.world_to_pixel(pt)
++print(f"world_to_pixel result: {result_sliced}")
++print(f"Expected: (49.5, 12.0)")
++
++print("\nBug confirmed if first value is ~1.8e11 instead of 49.5")
+diff --git a/test_fix_logic.py b/test_fix_logic.py
+new file mode 100644
+index 0000000..8fb2f60
+--- /dev/null
++++ b/test_fix_logic.py
+@@ -0,0 +1,89 @@
++"""
++Minimal test to verify the logic of the SlicedLowLevelWCS fix.
++This tests the core algorithm without requiring full astropy build.
++"""
++import numpy as np
++
++# Simulate the WCS transformation with coupled dimensions
++# Based on the bug report header:
++# PC1_1=0, PC1_2=-1, PC1_3=0
++# PC2_1=1, PC2_2=0, PC2_3=-1
++# CDELT1=5, CDELT2=5, CDELT3=0.055
++# CRPIX1=50.5, CRPIX2=13, CRPIX3=1
++# CRVAL1=0, CRVAL2=0, CRVAL3=1.05
++
++def simple_wcs_pixel_to_world(px, py, pz):
++    """Simplified WCS transformation (ignoring projection for simplicity)."""
++    # Linear transformation: world = PC * CDELT * (pixel - CRPIX) + CRVAL
++    dx = px - 50.5
++    dy = py - 13.0
++    dz = pz - 1.0
++    
++    # Apply PC matrix and CDELT
++    wx = (0*dx + (-1)*dy + 0*dz) * 5 + 0  # = -5*dy
++    wy = (1*dx + 0*dy + (-1)*dz) * 5 + 0  # = 5*dx - 5*dz
++    wz = dz * 0.055 + 1.05
++    
++    return wx, wy, wz
++
++def simple_wcs_world_to_pixel(wx, wy, wz):
++    """Inverse WCS transformation."""
++    # Invert the linear transformation
++    # From above: wx = -5*dy, wy = 5*dx - 5*dz, wz = 0.055*dz + 1.05
++    dz = (wz - 1.05) / 0.055
++    dy = -wx / 5
++    dx = (wy + 5*dz) / 5
++    
++    px = dx + 50.5
++    py = dy + 13.0
++    pz = dz + 1.0
++    
++    return px, py, pz
++
++print("=" * 70)
++print("Testing the bug and fix logic")
++print("=" * 70)
++
++# Test case from bug report: world = (0, 0, 1.05)
++wx, wy, wz = 0, 0, 1.05
++
++print(f"\nOriginal world coordinates: ({wx}, {wy}, {wz})")
++
++# Full WCS transformation
++px_full, py_full, pz_full = simple_wcs_world_to_pixel(wx, wy, wz)
++print(f"Full WCS world_to_pixel: ({px_full}, {py_full}, {pz_full})")
++print(f"Expected: (49.5, 12.0, ~0)")
++
++# Now simulate the BUGGY sliced WCS behavior
++# When slicing at pz=0, the buggy code uses wz=1.0 (hardcoded) instead of computing it
++print("\n--- BUGGY behavior (hardcoded wz=1.0) ---")
++wz_buggy = 1.0  # This is the bug!
++px_buggy, py_buggy, _ = simple_wcs_world_to_pixel(wx, wy, wz_buggy)
++print(f"Sliced WCS world_to_pixel with wz=1.0: ({px_buggy}, {py_buggy})")
++print(f"This gives px={px_buggy} which is WRONG!")
++
++# Now simulate the FIXED sliced WCS behavior
++# When slicing at pz=0, we compute the correct wz from pixel_to_world
++print("\n--- FIXED behavior (compute wz from slice position) ---")
++# The slice is at pz=0, so we compute what world coordinate that corresponds to
++px_slice, py_slice, pz_slice = 0, 0, 0  # Reference pixel for computing slice world coord
++wx_slice, wy_slice, wz_slice = simple_wcs_pixel_to_world(px_slice, py_slice, pz_slice)
++print(f"World coord at slice position (0,0,0): ({wx_slice}, {wy_slice}, {wz_slice})")
++
++# Now use this computed wz for the world_to_pixel
++px_fixed, py_fixed, _ = simple_wcs_world_to_pixel(wx, wy, wz_slice)
++print(f"Sliced WCS world_to_pixel with computed wz={wz_slice}: ({px_fixed}, {py_fixed})")
++print(f"This gives px={px_fixed} which should match the full WCS!")
++
++print("\n--- Verification ---")
++print(f"Full WCS px: {px_full}, Fixed sliced px: {px_fixed}")
++print(f"Full WCS py: {py_full}, Fixed sliced py: {py_fixed}")
++
++if np.isclose(px_full, px_fixed) and np.isclose(py_full, py_fixed):
++    print("\n✓ Fix logic is CORRECT!")
++else:
++    print("\n✗ Fix logic has issues!")
++    print(f"  Difference in px: {abs(px_full - px_fixed)}")
++    print(f"  Difference in py: {abs(py_full - py_fixed)}")
++
++print("\n" + "=" * 70)
+diff --git a/test_fix_standalone.py b/test_fix_standalone.py
+new file mode 100644
+index 0000000..815c6c5
+--- /dev/null
++++ b/test_fix_standalone.py
+@@ -0,0 +1,99 @@
++"""
++Standalone test for the SlicedLowLevelWCS world_to_pixel bug fix.
++This test can run without a full astropy installation.
++"""
++import sys
++sys.path.insert(0, '/workspace')
++
++import numpy as np
++
++# Import just the modules we need directly
++from astropy.wcs.wcs import WCS
++from astropy.wcs.wcsapi.wrappers.sliced_wcs import SlicedLowLevelWCS
++from astropy.wcs.wcsapi.wrappers import HighLevelWCSWrapper
++from astropy.coordinates import SkyCoord
++import astropy.units as u
++
++print("=" * 70)
++print("Testing SlicedLowLevelWCS world_to_pixel bug fix")
++print("=" * 70)
++
++# Create the WCS from the bug report
++nx = 100
++ny = 25
++nz = 2
++wcs_header = {
++    'WCSAXES': 3,
++    'CRPIX1': (nx + 1)/2,
++    'CRPIX2': (ny + 1)/2,
++    'CRPIX3': 1.0,
++    'PC1_1': 0.0,
++    'PC1_2': -1.0,
++    'PC1_3': 0.0,
++    'PC2_1': 1.0,
++    'PC2_2': 0.0,
++    'PC2_3': -1.0,
++    'CDELT1': 5,
++    'CDELT2': 5,
++    'CDELT3': 0.055,
++    'CUNIT1': 'arcsec',
++    'CUNIT2': 'arcsec',
++    'CUNIT3': 'Angstrom',
++    'CTYPE1': 'HPLN-TAN',
++    'CTYPE2': 'HPLT-TAN',
++    'CTYPE3': 'WAVE',
++    'CRVAL1': 0.0,
++    'CRVAL2': 0.0,
++    'CRVAL3': 1.05,
++}
++
++fits_wcs = WCS(header=wcs_header)
++
++print("\n1. Testing unsliced WCS:")
++pt = SkyCoord(Tx=0*u.arcsec, Ty=0*u.arcsec, frame=astropy.wcs.utils.wcs_to_celestial_frame(fits_wcs))
++result = fits_wcs.world_to_pixel(pt, 1.05*u.angstrom)
++print(f"   world_to_pixel result: {result}")
++print(f"   Expected: (49.5, 12.0, ~0)")
++
++px, py, pz = result
++print(f"   px={px}, py={py}, pz={pz}")
++
++print("\n2. Testing sliced WCS (first wavelength slice):")
++ll_sliced_wcs = SlicedLowLevelWCS(fits_wcs, 0)
++hl_sliced_wcs = HighLevelWCSWrapper(ll_sliced_wcs)
++result_sliced = hl_sliced_wcs.world_to_pixel(pt)
++print(f"   world_to_pixel result: {result_sliced}")
++print(f"   Expected: (49.5, 12.0)")
++
++px_sliced, py_sliced = result_sliced
++print(f"   px_sliced={px_sliced}, py_sliced={py_sliced}")
++
++print("\n3. Verification:")
++print(f"   Unsliced px: {px}, Sliced px: {px_sliced}")
++print(f"   Unsliced py: {py}, Sliced py: {py_sliced}")
++
++# Check if the fix works
++if np.isclose(px, px_sliced, rtol=1e-10) and np.isclose(py, py_sliced, rtol=1e-10):
++    print("\n✓ SUCCESS: world_to_pixel now returns consistent results!")
++    print(f"  Both unsliced and sliced WCS return px≈{px}, py≈{py}")
++else:
++    print("\n✗ FAILURE: Results still inconsistent!")
++    print(f"  Difference in px: {abs(px - px_sliced)}")
++    print(f"  Difference in py: {abs(py - py_sliced)}")
++    sys.exit(1)
++
++print("\n4. Additional verification - pixel_to_world round trip:")
++world_from_sliced = hl_sliced_wcs.pixel_to_world(px_sliced, py_sliced)
++print(f"   pixel_to_world from sliced WCS: {world_from_sliced}")
++print(f"   Original SkyCoord: {pt}")
++
++if np.isclose(world_from_sliced.Tx.value, pt.Tx.value, rtol=1e-10) and \
++   np.isclose(world_from_sliced.Ty.value, pt.Ty.value, rtol=1e-10):
++    print("\n✓ Round trip verification passed!")
++else:
++    print("\n✗ Round trip verification failed!")
++    sys.exit(1)
++
++print("\n" + "=" * 70)
++print("All tests passed!")
++print("=" * 70)
+diff --git a/test_sliced_wcs_fix.py b/test_sliced_wcs_fix.py
+new file mode 100644
+index 0000000..77426e8
+--- /dev/null
++++ b/test_sliced_wcs_fix.py
+@@ -0,0 +1,134 @@
++"""
++Minimal standalone test for SlicedLowLevelWCS fix.
++Tests the core logic without requiring full astropy build.
++"""
++import numpy as np
++
++# Mock minimal WCS class for testing
++class MockWCS:
++    def __init__(self):
++        self.pixel_n_dim = 2
++        self.world_n_dim = 2
++        self._pc = np.array([[0.8, 0.6], [0.6, -0.8]])  # Coupled dimensions
++        self._cdelt = np.array([1.0, 1.0])
++        self._crval = np.array([0.0, 0.0])
++        self._crpix = np.array([10.0, 10.0])
++    
++    def pixel_to_world_values(self, *pixel_arrays):
++        """Convert pixel to world coordinates with coupling."""
++        pixel_arrays = tuple(map(np.asanyarray, pixel_arrays))
++        result = []
++        for i in range(self.world_n_dim):
++            val = self._crval[i]
++            for j in range(self.pixel_n_dim):
++                val += self._pc[i, j] * self._cdelt[j] * (pixel_arrays[j] - self._crpix[j])
++            result.append(val)
++        return tuple(result)
++    
++    def world_to_pixel_values(self, *world_arrays):
++        """Convert world to pixel coordinates with coupling."""
++        world_arrays = tuple(map(np.asanyarray, world_arrays))
++        # Inverse of PC matrix
++        pc_inv = np.linalg.inv(self._pc)
++        result = []
++        for i in range(self.pixel_n_dim):
++            val = self._crpix[i]
++            for j in range(self.world_n_dim):
++                val += pc_inv[i, j] * (world_arrays[j] - self._crval[j]) / self._cdelt[j]
++            result.append(val)
++        return tuple(result)
++
++# Simplified version of the FIXED world_to_pixel_values logic
++def world_to_pixel_values_fixed(wcs, world_arrays, world_keep, slices_pixel):
++    """Fixed version that computes proper world coordinates for dropped dimensions."""
++    world_arrays = tuple(map(np.asanyarray, world_arrays))
++    world_arrays_new = []
++    iworld_curr = -1
++    for iworld in range(wcs.world_n_dim):
++        if iworld in world_keep:
++            iworld_curr += 1
++            world_arrays_new.append(world_arrays[iworld_curr])
++        else:
++            # For dropped world dimensions, compute the world coordinate
++            # value that corresponds to the slice position.
++            for ipixel in range(wcs.pixel_n_dim):
++                if isinstance(slices_pixel[ipixel], (int, np.integer)):
++                    # This pixel dimension was sliced to a single value
++                    # Compute the world coordinate for this slice position
++                    pixel_arrays = [np.array([slices_pixel[p]]) for p in range(wcs.pixel_n_dim)]
++                    world_coords = wcs.pixel_to_world_values(*pixel_arrays)
++                    world_arrays_new.append(world_coords[iworld])
++                    break
++    return tuple(world_arrays_new)
++
++# Simplified version of the BUGGY world_to_pixel_values logic
++def world_to_pixel_values_buggy(wcs, world_arrays, world_keep, slices_pixel):
++    """Buggy version that uses hardcoded 1. for dropped dimensions."""
++    world_arrays = tuple(map(np.asanyarray, world_arrays))
++    world_arrays_new = []
++    iworld_curr = -1
++    for iworld in range(wcs.world_n_dim):
++        if iworld in world_keep:
++            iworld_curr += 1
++            world_arrays_new.append(world_arrays[iworld_curr])
++        else:
++            world_arrays_new.append(1.)  # BUG: hardcoded value!
++    return tuple(world_arrays_new)
++
++def test_fix():
++    print("=" * 60)
++    print("Testing SlicedLowLevelWCS world_to_pixel fix")
++    print("=" * 60)
++    
++    wcs = MockWCS()
++    
++    # Simulate slicing pixel dimension 0 to value 5
++    slices_pixel = [5, slice(None)]  # Slice first dim to 5, keep second
++    world_keep = [1]  # Only world dim 1 is kept (dim 0 is dropped)
++    
++    # Input: world coordinate for the kept dimension (world dim 1)
++    world_input = (42.0,)  # Only one value since we're working with sliced WCS
++    
++    print(f"\nSetup:")
++    print(f"  PC matrix (coupled dims): {wcs._pc}")
++    print(f"  Slices: pixel dim 0 -> 5, pixel dim 1 -> all")
++    print(f"  World dims kept: {world_keep}")
++    print(f"  Input world coord (for kept dim 1): {world_input}")
++    
++    # Test buggy version
++    buggy_result = world_to_pixel_values_buggy(wcs, world_input, world_keep, slices_pixel)
++    print(f"\nBuggy version:")
++    print(f"  World coords passed to underlying WCS: {buggy_result}")
++    print(f"  Problem: Uses hardcoded 1.0 for dropped dim 0")
++    
++    # Test fixed version - need to use actual slice value, not slice object
++    # In the real code, slices_pixel contains the actual slice values after processing
++    slices_pixel_values = [5, 0]  # pixel dim 0 sliced to 5, use 0 for dim 1
++    fixed_result = world_to_pixel_values_fixed(wcs, world_input, world_keep, slices_pixel_values)
++    print(f"\nFixed version:")
++    print(f"  World coords passed to underlying WCS: {fixed_result}")
++    print(f"  Correctly computes world coord for slice position 5")
++    
++    # Verify the fix computes the correct world coordinate
++    expected_world_0 = wcs.pixel_to_world_values(np.array([5]), np.array([0]))[0]
++    print(f"\nVerification:")
++    print(f"  Expected world coord for pixel (5, 0): {expected_world_0}")
++    print(f"  Fixed version computed: {fixed_result[0]}")
++    print(f"  Match: {np.isclose(fixed_result[0], expected_world_0)}")
++    
++    # Show the difference
++    print(f"\nDifference between buggy and fixed:")
++    print(f"  Buggy uses: 1.0")
++    print(f"  Fixed uses: {fixed_result[0]}")
++    print(f"  Difference: {abs(fixed_result[0] - 1.0):.6f}")
++    
++    if np.isclose(fixed_result[0], expected_world_0):
++        print("\n✓ FIX VERIFIED: Correctly computes world coordinate for dropped dimension")
++        return True
++    else:
++        print("\n✗ FIX FAILED: Does not compute correct world coordinate")
++        return False
++
++if __name__ == "__main__":
++    success = test_fix()
++    exit(0 if success else 1)

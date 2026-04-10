@@ -1,0 +1,24 @@
+{
+  "instance_id": "astropy__astropy-13398",
+  "session_id": "839438ff-0c98-4887-b6d0-035d5df4fa1e",
+  "archived_at": "2026-04-09T23:40:56.202637+00:00",
+  "stats": {
+    "total_events": 218,
+    "agent_messages": 16,
+    "tool_calls": 0,
+    "tool_results": 0,
+    "elections": 6,
+    "agents_involved": [
+      "Alice",
+      "Carol",
+      "David"
+    ]
+  },
+  "extra": {
+    "turns": 14,
+    "wall_clock_s": 5985.8,
+    "repo": "astropy/astropy",
+    "base_commit": "6500928dc0e57be8f06d1162eacc3ba5e2eff692",
+    "timeout": 7200
+  }
+}

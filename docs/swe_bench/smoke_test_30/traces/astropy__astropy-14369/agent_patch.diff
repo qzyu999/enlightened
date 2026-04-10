@@ -1,0 +1,360 @@
+diff --git a/astropy/units/format/cds.py b/astropy/units/format/cds.py
+index 307e987..649d11d 100644
+--- a/astropy/units/format/cds.py
++++ b/astropy/units/format/cds.py
+@@ -164,28 +164,14 @@ class CDS(Base):
+ 
+         def p_combined_units(p):
+             """
+-            combined_units : product_of_units
+-                           | division_of_units
++            combined_units : unit_expression
++                           | combined_units PRODUCT unit_expression
++                           | combined_units DIVISION unit_expression
+             """
+-            p[0] = p[1]
+-
+-        def p_product_of_units(p):
+-            """
+-            product_of_units : unit_expression PRODUCT combined_units
+-                             | unit_expression
+-            """
+-            if len(p) == 4:
+-                p[0] = p[1] * p[3]
+-            else:
++            if len(p) == 2:
+                 p[0] = p[1]
+-
+-        def p_division_of_units(p):
+-            """
+-            division_of_units : DIVISION unit_expression
+-                              | unit_expression DIVISION combined_units
+-            """
+-            if len(p) == 3:
+-                p[0] = p[2] ** -1
++            elif p[2] == ".":
++                p[0] = p[1] * p[3]
+             else:
+                 p[0] = p[1] / p[3]
+ 
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000..abcddd4
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,14 @@
++from astropy.table import Table
++
++# Read the CDS format file
++dat = Table.read('tab.txt', format='ascii.cds')
++print("Table:")
++print(dat)
++print()
++print("Column units:")
++print(f"SBCONT unit: {dat['SBCONT'].unit}")
++print(f"SBLINE unit: {dat['SBLINE'].unit}")
++print()
++print("Expected:")
++print("SBCONT: 1e+3 J / (m s kpc2)")
++print("SBLINE: 1e-7 J / (s kpc2)")
+diff --git a/tab.txt b/tab.txt
+new file mode 100644
+index 0000000..77014cc
+--- /dev/null
++++ b/tab.txt
+@@ -0,0 +1,17 @@
++Title:
++Authors:
++Table:
++================================================================================
++Byte-by-byte Description of file: tab.txt
++--------------------------------------------------------------------------------
++   Bytes Format Units                   Label      Explanations
++--------------------------------------------------------------------------------
++   1- 10 A10    ---                     ID         ID
++  12- 21 F10.5  10+3J/m/s/kpc2          SBCONT     Cont surface brightness
++  23- 32 F10.5  10-7J/s/kpc2            SBLINE     Line surface brightness
++--------------------------------------------------------------------------------
++ID0001     70.99200   38.51040      
++ID0001     13.05120   28.19240      
++ID0001     3.83610    10.98370      
++ID0001     1.99101    6.78822       
++ID0001     1.31142    5.01932      
+diff --git a/test_grammar_fix.py b/test_grammar_fix.py
+new file mode 100644
+index 0000000..8308645
+--- /dev/null
++++ b/test_grammar_fix.py
+@@ -0,0 +1,149 @@
++#!/usr/bin/env python
++"""
++Standalone test for the CDS unit parser grammar fix.
++This tests the grammar rules directly without needing to build astropy.
++"""
++
++import re
++from fractions import Fraction
++
++# Copy the relevant parts of the CDS parser grammar
++# This is a simplified version that tests the core logic
++
++class SimpleCDSParser:
++    """Simplified CDS parser for testing the grammar fix."""
++    
++    # Token patterns
++    TOKENS = [
++        ('NUMBER', r'\d+(?:\.\d+)?(?:[eE][+-]?\d+)?'),
++        ('UNIT', r'[a-zA-Z][a-zA-Z0-9]*'),
++        ('PRODUCT', r'[\*\.]'),
++        ('DIVISION', r'/'),
++        ('POWER', r'\*\*|\^'),
++        ('PLUS', r'\+'),
++        ('MINUS', r'-'),
++        ('LPAREN', r'\('),
++        ('RPAREN', r'\)'),
++        ('WS', r'\s+'),
++    ]
++    
++    def __init__(self):
++        self.token_pattern = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in self.TOKENS)
++    
++    def tokenize(self, text):
++        """Tokenize the input string."""
++        tokens = []
++        for match in re.finditer(self.token_pattern, text):
++            kind = match.lastgroup
++            value = match.group()
++            if kind != 'WS':
++                tokens.append((kind, value))
++        return tokens
++    
++    def parse(self, text):
++        """Parse the unit string and return the result."""
++        tokens = self.tokenize(text)
++        print(f"Tokens: {tokens}")
++        
++        # Simple recursive descent parser
++        pos = [0]  # Use list to allow modification in nested functions
++        
++        def parse_unit_expression():
++            """Parse a single unit expression (unit with optional power)."""
++            if pos[0] >= len(tokens):
++                return 1
++            
++            token = tokens[pos[0]]
++            if token[0] == 'NUMBER':
++                pos[0] += 1
++                return float(token[1])
++            elif token[0] == 'UNIT':
++                pos[0] += 1
++                unit = token[1]
++                # Check for power
++                if pos[0] < len(tokens) and tokens[pos[0]][0] in ('POWER', 'PLUS', 'MINUS'):
++                    op = tokens[pos[0]][0]
++                    pos[0] += 1
++                    if pos[0] < len(tokens):
++                        if tokens[pos[0]][0] == 'NUMBER':
++                            power = float(tokens[pos[0]][1])
++                            pos[0] += 1
++                        elif tokens[pos[0]][0] == 'LPAREN':
++                            pos[0] += 1
++                            if pos[0] < len(tokens) and tokens[pos[0]][0] == 'NUMBER':
++                                power = float(tokens[pos[0]][1])
++                                pos[0] += 1
++                            if pos[0] < len(tokens) and tokens[pos[0]][0] == 'RPAREN':
++                                pos[0] += 1
++                            else:
++                                power = 1
++                        else:
++                            power = 1
++                    else:
++                        power = 1
++                    if op == 'PLUS':
++                        power = abs(power)
++                    elif op == 'MINUS':
++                        power = -abs(power)
++                    return f"{unit}**{power}"
++                return unit
++            elif token[0] == 'LPAREN':
++                pos[0] += 1
++                result = parse_combined_units()
++                if pos[0] < len(tokens) and tokens[pos[0]][0] == 'RPAREN':
++                    pos[0] += 1
++                return result
++            return 1
++        
++        def parse_combined_units():
++            """Parse combined units (products and divisions)."""
++            # FIXED: Use left-associative parsing for both multiplication and division
++            result = parse_unit_expression()
++            
++            while pos[0] < len(tokens):
++                token = tokens[pos[0]]
++                if token[0] == 'PRODUCT':
++                    pos[0] += 1
++                    right = parse_unit_expression()
++                    result = f"({result}) * ({right})"
++                elif token[0] == 'DIVISION':
++                    pos[0] += 1
++                    right = parse_unit_expression()
++                    result = f"({result}) / ({right})"
++                else:
++                    break
++            
++            return result
++        
++        result = parse_combined_units()
++        print(f"Parsed: {result}")
++        return result
++
++# Test cases
++test_cases = [
++    ("J/m/s/kpc2", "(J) / (m) / (s) / (kpc**2)"),  # Chained division - the bug case
++    ("m/s", "(m) / (s)"),  # Simple division
++    ("m*s", "(m) * (s)"),  # Simple multiplication
++    ("m/s*kpc", "(m) / (s) * (kpc)"),  # Mixed
++]
++
++print("Testing CDS unit parser grammar fix")
++print("=" * 50)
++
++parser = SimpleCDSParser()
++all_passed = True
++
++for input_str, expected in test_cases:
++    result = parser.parse(input_str)
++    passed = result == expected
++    all_passed = all_passed and passed
++    status = "✓ PASS" if passed else "✗ FAIL"
++    print(f"\n{status}: {input_str}")
++    print(f"  Expected: {expected}")
++    print(f"  Got:      {result}")
++
++print("\n" + "=" * 50)
++if all_passed:
++    print("All tests passed!")
++else:
++    print("Some tests failed!")
+diff --git a/test_pyparsing_grammar.py b/test_pyparsing_grammar.py
+new file mode 100644
+index 0000000..d26f9f6
+--- /dev/null
++++ b/test_pyparsing_grammar.py
+@@ -0,0 +1,84 @@
++#!/usr/bin/env python
++"""
++Direct test of the CDS parser grammar using pyparsing.
++This tests the actual grammar rules without needing to build astropy.
++"""
++
++from pyparsing import (
++    Word, alphas, alphanums, nums, Optional, OneOrMore,
++    Suppress, Combine, Literal, infix_notation, opAssoc
++)
++from fractions import Fraction
++
++# Define the tokens (same as in astropy/units/format/cds.py)
++NUMBER = Combine(Optional("+") + (
++    Word(nums) + "." + Optional(Word(nums)) + Optional("e" + Optional("+") + Optional("-") + Word(nums))
++))
++
++UNIT = Word(alphas, alphanums + "_")
++
++PRODUCT = Literal("*") | Literal(".")
++DIVISION = Literal("/")
++POWER = Literal("**") | Literal("^")
++
++# Test the OLD grammar (right-associative, buggy)
++print("Testing OLD grammar (right-associative, buggy):")
++print("=" * 50)
++
++old_grammar = infix_notation(
++    UNIT,
++    [
++        (POWER, 2, opAssoc.RIGHT),
++        (DIVISION, 2, opAssoc.RIGHT),  # BUG: Right-associative
++        (PRODUCT, 2, opAssoc.LEFT),
++    ]
++)
++
++try:
++    result = old_grammar.parse_string("J/m/s/kpc2", parse_all=True)
++    print(f"J/m/s/kpc2 parsed as: {result}")
++    print(f"This is WRONG - should be J/(m*s*kpc^2)")
++except Exception as e:
++    print(f"Error: {e}")
++
++print()
++
++# Test the NEW grammar (left-associative, fixed)
++print("Testing NEW grammar (left-associative, fixed):")
++print("=" * 50)
++
++new_grammar = infix_notation(
++    UNIT,
++    [
++        (POWER, 2, opAssoc.RIGHT),
++        (DIVISION, 2, opAssoc.LEFT),  # FIX: Left-associative
++        (PRODUCT, 2, opAssoc.LEFT),
++    ]
++)
++
++try:
++    result = new_grammar.parse_string("J/m/s/kpc2", parse_all=True)
++    print(f"J/m/s/kpc2 parsed as: {result}")
++    print(f"This is CORRECT - J/m/s/kpc^2 = J/(m*s*kpc^2)")
++except Exception as e:
++    print(f"Error: {e}")
++
++print()
++
++# Test more cases
++print("Testing more cases with NEW grammar:")
++print("=" * 50)
++
++test_cases = [
++    "m/s",
++    "m*s",
++    "m/s*kpc",
++    "J/m/s/kpc2",
++]
++
++for test in test_cases:
++    try:
++        result = new_grammar.parse_string(test, parse_all=True)
++        print(f"{test:20s} -> {result}")
++    except Exception as e:
++        print(f"{test:20s} -> Error: {e}")
+diff --git a/test_unit_parser.py b/test_unit_parser.py
+new file mode 100644
+index 0000000..74e0726
+--- /dev/null
++++ b/test_unit_parser.py
+@@ -0,0 +1,27 @@
++# Test the CDS unit parser directly
++import sys
++sys.path.insert(0, '/workspace')
++
++# Import just the unit parser
++from astropy.units.format.cds import CDS
++
++# Test cases from the bug report
++test_units = [
++    ("10+3J/m/s/kpc2", "1e+3 J / (kpc2 m s)"),  # Should be: 1e+3 J / (m s kpc2)
++    ("10-7J/s/kpc2", "1e-7 J / (kpc2 s)"),    # Should be: 1e-7 J / (s kpc2)
++]
++
++print("Testing CDS unit parser:")
++print("=" * 60)
++
++for unit_str, expected in test_units:
++    try:
++        parsed = CDS.parse(unit_str)
++        print(f"\nInput:    {unit_str}")
++        print(f"Parsed:   {parsed}")
++        print(f"String:   {str(parsed)}")
++        print(f"Expected: {expected}")
++        print(f"Match:    {str(parsed) == expected}")
++    except Exception as e:
++        print(f"\nInput:  {unit_str}")
++        print(f"ERROR:  {e}")

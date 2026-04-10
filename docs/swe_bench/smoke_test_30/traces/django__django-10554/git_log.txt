@@ -1,0 +1,1 @@
+14d026c Fixed #30572 -- Prevented values()/values_list() on combined queryset from mutating the list of columns in querysets.

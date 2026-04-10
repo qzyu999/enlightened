@@ -1,0 +1,1 @@
+838e432 Completed test coverage for utils.text.Truncator.chars().

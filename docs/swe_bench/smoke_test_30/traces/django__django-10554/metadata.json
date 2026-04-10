@@ -1,0 +1,23 @@
+{
+  "instance_id": "django__django-10554",
+  "session_id": "57c3f214-8d32-47da-ba30-72f8bf37e75d",
+  "archived_at": "2026-04-10T22:00:33.222463+00:00",
+  "stats": {
+    "total_events": 208,
+    "agent_messages": 29,
+    "tool_calls": 0,
+    "tool_results": 0,
+    "elections": 6,
+    "agents_involved": [
+      "Carol",
+      "David"
+    ]
+  },
+  "extra": {
+    "turns": 10,
+    "wall_clock_s": 3186.7,
+    "repo": "django/django",
+    "base_commit": "14d026cccb144c6877294ba4cd4e03ebf0842498",
+    "timeout": 7200
+  }
+}

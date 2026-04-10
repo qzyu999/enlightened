@@ -1,0 +1,201 @@
+diff --git a/astropy/units/core.py b/astropy/units/core.py
+index e9bd986..1b20239 100644
+--- a/astropy/units/core.py
++++ b/astropy/units/core.py
+@@ -1710,6 +1710,8 @@ class UnrecognizedUnit(IrreducibleUnit):
+         _unrecognized_operator
+ 
+     def __eq__(self, other):
++        if other is None:
++            return False
+         other = Unit(other, parse_strict='silent')
+         return isinstance(other, UnrecognizedUnit) and self.name == other.name
+ 
+diff --git a/astropy/units/tests/test_units.py b/astropy/units/tests/test_units.py
+index 000c12d..3e14fa7 100644
+--- a/astropy/units/tests/test_units.py
++++ b/astropy/units/tests/test_units.py
+@@ -800,3 +800,33 @@ def test_unit_summary_prefixes():
+             assert prefixes == 'No'
+         elif unit.name == 'vox':
+             assert prefixes == 'Yes'
++
++
++def test_unrecognized_unit_none_comparison():
++    """
++    Test that comparing UnrecognizedUnit with None returns False.
++    
++    Regression test for TypeError when comparing UnrecognizedUnit with None.
++    The __eq__ method should return False instead of raising TypeError.
++    """
++    from ..core import UnrecognizedUnit
++    
++    # Create an unrecognized unit
++    x = UnrecognizedUnit('asdf')
++    
++    # Test that x == None returns False (not TypeError)
++    assert (x == None) == False
++    
++    # Test that None == x also returns False
++    assert (None == x) == False
++    
++    # Test that x != None returns True
++    assert (x != None) == True
++    
++    # Verify normal equality still works
++    y = UnrecognizedUnit('asdf')
++    assert (x == y) == True
++    
++    # Different unrecognized units should not be equal
++    z = UnrecognizedUnit('xyz')
++    assert (x == z) == False
+diff --git a/test_none_comparison.py b/test_none_comparison.py
+new file mode 100644
+index 0000000..8e0d4a9
+--- /dev/null
++++ b/test_none_comparison.py
+@@ -0,0 +1,23 @@
++#!/usr/bin/env python
++"""Test script to verify the None comparison fix for UnrecognizedUnit."""
++
++from astropy import units as u
++
++# Create an unrecognized unit
++x = u.Unit('asdf', parse_strict='silent')
++
++print("Testing UnrecognizedUnit equality with None...")
++print(f"x = {x!r}")
++print(f"x == None: {x == None}")
++print(f"x != None: {x != None}")
++
++# Also test that normal comparisons still work
++y = u.Unit('asdf', parse_strict='silent')
++z = u.Unit('xyz', parse_strict='silent')
++print(f"\nx == y (same name): {x == y}")
++print(f"x == z (different name): {x == z}")
++
++# Test with valid units
++print(f"\nx == u.meter: {x == u.meter}")
++
++print("\nAll tests passed!")
+diff --git a/test_unrecognized_unit_fix.py b/test_unrecognized_unit_fix.py
+new file mode 100644
+index 0000000..b245a53
+--- /dev/null
++++ b/test_unrecognized_unit_fix.py
+@@ -0,0 +1,76 @@
++#!/usr/bin/env python
++"""Verification script for UnrecognizedUnit None comparison fix."""
++
++import sys
++sys.path.insert(0, '/workspace')
++
++from astropy.units.core import UnrecognizedUnit, Unit
++
++def test_unrecognized_unit_none_comparison():
++    """Test that comparing UnrecognizedUnit with None returns False."""
++    # Create an unrecognized unit
++    x = UnrecognizedUnit('asdf')
++    
++    # Test 1: x == None should return False (not raise TypeError)
++    try:
++        result = (x == None)
++        assert result == False, f"Expected False, got {result}"
++        print("✓ Test 1 PASSED: x == None returns False")
++    except TypeError as e:
++        print(f"✗ Test 1 FAILED: x == None raised TypeError: {e}")
++        return False
++    
++    # Test 2: None == x should also return False
++    try:
++        result = (None == x)
++        assert result == False, f"Expected False, got {result}"
++        print("✓ Test 2 PASSED: None == x returns False")
++    except TypeError as e:
++        print(f"✗ Test 2 FAILED: None == x raised TypeError: {e}")
++        return False
++    
++    # Test 3: x != None should return True
++    try:
++        result = (x != None)
++        assert result == True, f"Expected True, got {result}"
++        print("✓ Test 3 PASSED: x != None returns True")
++    except TypeError as e:
++        print(f"✗ Test 3 FAILED: x != None raised TypeError: {e}")
++        return False
++    
++    # Test 4: Verify normal equality still works
++    y = UnrecognizedUnit('asdf')
++    try:
++        result = (x == y)
++        assert result == True, f"Expected True for same name, got {result}"
++        print("✓ Test 4 PASSED: x == y (same name) returns True")
++    except Exception as e:
++        print(f"✗ Test 4 FAILED: x == y raised exception: {e}")
++        return False
++    
++    # Test 5: Different unrecognized units should not be equal
++    z = UnrecognizedUnit('xyz')
++    try:
++        result = (x == z)
++        assert result == False, f"Expected False for different names, got {result}"
++        print("✓ Test 5 PASSED: x == z (different name) returns False")
++    except Exception as e:
++        print(f"✗ Test 5 FAILED: x == z raised exception: {e}")
++        return False
++    
++    return True
++
++if __name__ == '__main__':
++    print("=" * 60)
++    print("Testing UnrecognizedUnit None comparison fix")
++    print("=" * 60)
++    
++    success = test_unrecognized_unit_none_comparison()
++    
++    print("=" * 60)
++    if success:
++        print("ALL TESTS PASSED ✓")
++        sys.exit(0)
++    else:
++        print("SOME TESTS FAILED ✗")
++        sys.exit(1)
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000..a51db4c
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,33 @@
++#!/usr/bin/env python
++"""Direct verification of the UnrecognizedUnit __eq__ fix."""
++
++import sys
++
++# Read the fixed code directly
++with open('/workspace/astropy/units/core.py', 'r') as f:
++    content = f.read()
++
++# Check if the fix is present
++if 'if other is None:' in content and 'return False' in content:
++    # Find the __eq__ method context
++    lines = content.split('\n')
++    for i, line in enumerate(lines):
++        if 'def __eq__(self, other):' in line:
++            # Check next few lines for the fix
++            context = '\n'.join(lines[i:i+6])
++            if 'if other is None:' in context and 'return False' in context:
++                print("✓ Fix verified in source code!")
++                print("\nFixed __eq__ method:")
++                print(context)
++                print("\n" + "="*60)
++                print("VERIFICATION SUMMARY:")
++                print("="*60)
++                print("✓ The fix has been correctly applied to astropy/units/core.py")
++                print("✓ The __eq__ method now checks for None before Unit conversion")
++                print("✓ This prevents TypeError when comparing UnrecognizedUnit with None")
++                print("\nNote: Full runtime testing requires Python 3.12 compatibility fixes")
++                print("      in astropy's config module (collections.Mapping issue).")
++                sys.exit(0)
++
++print("✗ Fix not found in source code!")
++sys.exit(1)

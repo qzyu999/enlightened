@@ -1,0 +1,104 @@
+diff --git a/astropy/units/quantity.py b/astropy/units/quantity.py
+index ded609c..8bccb8b 100644
+--- a/astropy/units/quantity.py
++++ b/astropy/units/quantity.py
+@@ -377,9 +377,7 @@ class Quantity(np.ndarray, metaclass=InheritDocstrings):
+                             "Numpy numeric type.")
+ 
+         # by default, cast any integer, boolean, etc., to float
+-        if dtype is None and (not (np.can_cast(np.float32, value.dtype)
+-                                   or value.dtype.fields)
+-                              or value.dtype.kind == 'O'):
++        if dtype is None and value.dtype.kind not in 'fc':
+             value = value.astype(float)
+ 
+         value = value.view(cls)
+diff --git a/test_float16_fix_standalone.py b/test_float16_fix_standalone.py
+new file mode 100644
+index 0000000..1af5b25
+--- /dev/null
++++ b/test_float16_fix_standalone.py
+@@ -0,0 +1,50 @@
++"""
++Standalone test for float16 dtype preservation fix.
++This tests the logic directly without needing to build astropy extension modules.
++"""
++import numpy as np
++
++def test_dtype_preservation_logic():
++    """Test the new dtype preservation logic."""
++    
++    # Test cases: (input_dtype, should_cast_to_float)
++    test_cases = [
++        (np.float16, False),  # Should preserve float16
++        (np.float32, False),  # Should preserve float32
++        (np.float64, False),  # Should preserve float64
++        (np.complex64, False),  # Should preserve complex
++        (np.complex128, False),  # Should preserve complex
++        (np.int8, True),   # Should cast to float
++        (np.int16, True),  # Should cast to float
++        (np.int32, True),  # Should cast to float
++        (np.int64, True),  # Should cast to float
++        (np.uint8, True),  # Should cast to float
++        (np.bool_, True),  # Should cast to float
++    ]
++    
++    print("Testing dtype preservation logic: dtype.kind not in 'fc'")
++    print("-" * 60)
++    
++    all_passed = True
++    for dtype, expected_cast in test_cases:
++        sample = dtype(1)
++        kind = sample.dtype.kind
++        should_cast = kind not in 'fc'
++        
++        status = "✓ PASS" if should_cast == expected_cast else "✗ FAIL"
++        if should_cast != expected_cast:
++            all_passed = False
++        
++        print(f"{status}: {dtype.__name__:12s} (kind={kind!r}) -> cast={should_cast}, expected={expected_cast}")
++    
++    print("-" * 60)
++    if all_passed:
++        print("All tests PASSED!")
++    else:
++        print("Some tests FAILED!")
++    
++    return all_passed
++
++if __name__ == "__main__":
++    success = test_dtype_preservation_logic()
++    exit(0 if success else 1)
+diff --git a/test_float16_issue.py b/test_float16_issue.py
+new file mode 100644
+index 0000000..5bfb52f
+--- /dev/null
++++ b/test_float16_issue.py
+@@ -0,0 +1,27 @@
++"""Test to reproduce the float16 dtype upgrade issue."""
++import numpy as np
++from astropy import units as u
++
++def test_float16_preserved():
++    """Test that np.float16 dtype is preserved when creating a Quantity."""
++    q = np.float16(1) * u.km
++    print(f"np.float16(1) * u.km = {q}")
++    print(f"dtype = {q.dtype}")
++    assert q.dtype == np.float16, f"Expected float16, got {q.dtype}"
++    print("PASS: float16 dtype preserved")
++
++def test_other_floats_preserved():
++    """Test that other float dtypes are also preserved."""
++    q32 = np.float32(1) * u.km
++    q64 = np.float64(1) * u.km
++    
++    print(f"\nnp.float32(1) * u.km dtype = {q32.dtype}")
++    print(f"np.float64(1) * u.km dtype = {q64.dtype}")
++    
++    assert q32.dtype == np.float32, f"Expected float32, got {q32.dtype}"
++    assert q64.dtype == np.float64, f"Expected float64, got {q64.dtype}"
++    print("PASS: float32 and float64 dtypes preserved")
++
++if __name__ == "__main__":
++    test_other_floats_preserved()
++    test_float16_preserved()

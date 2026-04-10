@@ -1,0 +1,233 @@
+diff --git a/astropy/timeseries/core.py b/astropy/timeseries/core.py
+index c279f35..8278656 100644
+--- a/astropy/timeseries/core.py
++++ b/astropy/timeseries/core.py
+@@ -76,9 +76,18 @@ class BaseTimeSeries(QTable):
+ 
+             elif self.colnames[:len(required_columns)] != required_columns:
+ 
+-                raise ValueError("{} object is invalid - expected '{}' "
+-                                 "as the first column{} but found '{}'"
+-                                 .format(self.__class__.__name__, required_columns[0], plural, self.colnames[0]))
++                # Check if columns are missing vs. wrong order
++                missing_columns = [col for col in required_columns if col not in self.colnames]
++                if missing_columns:
++                    # Report missing columns
++                    missing_str = ', '.join(repr(col) for col in missing_columns)
++                    raise ValueError("{} object is invalid - missing required column{}: {}"
++                                     .format(self.__class__.__name__, 's' if len(missing_columns) > 1 else '', missing_str))
++                else:
++                    # Columns exist but in wrong order
++                    raise ValueError("{} object is invalid - expected '{}' "
++                                     "as the first column{} but found '{}'"
++                                     .format(self.__class__.__name__, required_columns[0], plural, self.colnames[0]))
+ 
+             if (self._required_columns_relax
+                     and self._required_columns == self.colnames[:len(self._required_columns)]):
+diff --git a/astropy/timeseries/tests/test_common.py b/astropy/timeseries/tests/test_common.py
+index c873ac6..3f8e501 100644
+--- a/astropy/timeseries/tests/test_common.py
++++ b/astropy/timeseries/tests/test_common.py
+@@ -60,6 +60,16 @@ class CommonTimeSeriesTests:
+             ts.remove_columns(ts.colnames)
+         assert 'TimeSeries object is invalid' in exc.value.args[0]
+ 
++    def test_missing_column_error_message(self):
++        # Test that missing column error message is clear and actionable
++        ts = self.series.copy()
++        ts.remove_columns(['a', 'b', 'c'])  # Keep only 'time'
++        with pytest.raises(ValueError) as exc:
++            ts.remove_columns(['time'])  # Now all columns removed
++        error_msg = exc.value.args[0]
++        # Should mention missing columns, not misleading "expected X but found X"
++        assert 'missing required column' in error_msg
++
+     def test_join(self):
+         ts_other = self.series.copy()
+         ts_other.add_row(self._row)
+diff --git a/minimal_bug_demo.py b/minimal_bug_demo.py
+new file mode 100644
+index 0000000..5793cbf
+--- /dev/null
++++ b/minimal_bug_demo.py
+@@ -0,0 +1,35 @@
++"""
++Minimal reproduction of the TimeSeries bug without full astropy installation.
++"""
++
++# Simulate the _check_required_columns logic from core.py
++def check_required_columns(colnames, required_columns):
++    """Simulates the buggy check logic."""
++    
++    if len(colnames) == 0:
++        raise ValueError(f"TimeSeries object is invalid - expected '{required_columns[0]}' "
++                         f"as the first column but time series has no columns")
++    
++    # This is the buggy check - it only compares first column!
++    if colnames[:len(required_columns)] != required_columns:
++        raise ValueError(f"TimeSeries object is invalid - expected '{required_columns[0]}' "
++                         f"as the first column but found '{colnames[0]}'")
++
++# Test case from the bug report
++print("=== Reproducing the bug ===")
++print("\nScenario: TimeSeries with required columns ['time', 'flux']")
++print("After removing 'flux', columns are ['time']")
++print()
++
++try:
++    check_required_columns(colnames=['time'], required_columns=['time', 'flux'])
++except ValueError as e:
++    print(f"BUGGY ERROR MESSAGE: {e}")
++    print("\n❌ This is misleading! It says 'expected time but found time'")
++    print("   but the real problem is that 'flux' is MISSING!")
++
++print("\n" + "="*60)
++print("\n=== What the error SHOULD say ===")
++print("\nExpected: Something like:")
++print("  'TimeSeries object is invalid - missing required column(s): flux'")
++print("\nThis clearly tells the user what went wrong!")
+diff --git a/test_bug_repro.py b/test_bug_repro.py
+new file mode 100644
+index 0000000..c68092a
+--- /dev/null
++++ b/test_bug_repro.py
+@@ -0,0 +1,19 @@
++import numpy as np
++from astropy.time import Time
++from astropy.timeseries import TimeSeries
++
++# Reproduce the bug
++time = Time(np.arange(100000, 100003), format='jd')
++ts = TimeSeries(time=time, data={"flux": [99.9, 99.8, 99.7]})
++ts._required_columns = ["time", "flux"]
++
++print("Before removing column:")
++print(f"Columns: {ts.colnames}")
++print(f"Required columns: {ts._required_columns}")
++
++try:
++    ts.remove_column("flux")
++except ValueError as e:
++    print(f"\nException raised: {e}")
++    print("\nThis error message is misleading - it says 'expected time but found time'")
++    print("but the real issue is that 'flux' is missing!")
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000..b26d9b2
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,34 @@
++"""
++Test the fix for the TimeSeries bug - missing column error message.
++"""
++import sys
++sys.path.insert(0, '/workspace')
++
++import numpy as np
++from astropy.time import Time
++from astropy.timeseries import TimeSeries
++
++print("Testing the fix for missing column error message...")
++print()
++
++# Create a TimeSeries
++time = Time(np.arange(100000, 100003), format='jd')
++ts = TimeSeries(time=time, data={'flux': np.arange(3)})
++
++print(f"Original columns: {ts.colnames}")
++
++# Remove the 'flux' column - this should trigger a clear error message
++try:
++    del ts['flux']
++    ts._check_required_columns()
++except ValueError as e:
++    error_msg = str(e)
++    print(f"\nError message: {error_msg}")
++    
++    # Check if the error message is clear
++    if 'missing' in error_msg.lower() and 'flux' in error_msg:
++        print("\n✅ SUCCESS! Error message clearly indicates 'flux' is missing!")
++    elif 'expected' in error_msg and 'found' in error_msg:
++        print("\n❌ FAIL! Error message still says 'expected X but found X' (misleading)")
++    else:
++        print(f"\n⚠️  UNEXPECTED error format: {error_msg}")
+diff --git a/test_fixed_logic.py b/test_fixed_logic.py
+new file mode 100644
+index 0000000..fa9106d
+--- /dev/null
++++ b/test_fixed_logic.py
+@@ -0,0 +1,74 @@
++"""
++Direct test of the fixed _check_required_columns logic.
++"""
++
++# Simulate the FIXED _check_required_columns logic
++def check_required_columns_fixed(colnames, required_columns):
++    """Fixed version that properly reports missing columns."""
++    
++    if colnames[:len(required_columns)] != required_columns:
++        # Check if columns are missing vs. wrong order
++        missing_columns = [col for col in required_columns if col not in colnames]
++        if missing_columns:
++            # Report missing columns
++            missing_str = ', '.join(repr(col) for col in missing_columns)
++            plural = 's' if len(missing_columns) > 1 else ''
++            raise ValueError(f"TimeSeries object is invalid - missing required column{plural}: {missing_str}")
++        else:
++            # Columns exist but in wrong order
++            plural = 's' if len(required_columns) > 1 else ''
++            raise ValueError(f"TimeSeries object is invalid - expected '{required_columns[0]}' "
++                           f"as the first column{plural} but found '{colnames[0]}'")
++
++print("=" * 60)
++print("Testing FIXED error message for missing columns")
++print("=" * 60)
++print()
++
++# Test case 1: Missing 'flux' column
++print("Test 1: Missing 'flux' column")
++print("  Columns: ['time']")
++print("  Required: ['time', 'flux']")
++try:
++    check_required_columns_fixed(['time'], ['time', 'flux'])
++except ValueError as e:
++    print(f"  Error: {e}")
++    if 'missing' in str(e).lower() and 'flux' in str(e):
++        print("  ✅ PASS - Clearly indicates 'flux' is missing!")
++    else:
++        print("  ❌ FAIL - Error message is not clear")
++
++print()
++
++# Test case 2: Missing multiple columns
++print("Test 2: Missing multiple columns")
++print("  Columns: ['time']")
++print("  Required: ['time', 'flux', 'error']")
++try:
++    check_required_columns_fixed(['time'], ['time', 'flux', 'error'])
++except ValueError as e:
++    print(f"  Error: {e}")
++    if 'missing' in str(e).lower() and 'flux' in str(e) and 'error' in str(e):
++        print("  ✅ PASS - Clearly indicates both 'flux' and 'error' are missing!")
++    else:
++        print("  ❌ FAIL - Error message is not clear")
++
++print()
++
++# Test case 3: Wrong order (columns exist but in wrong order)
++print("Test 3: Wrong order (columns exist but in wrong order)")
++print("  Columns: ['flux', 'time']")
++print("  Required: ['time', 'flux']")
++try:
++    check_required_columns_fixed(['flux', 'time'], ['time', 'flux'])
++except ValueError as e:
++    print(f"  Error: {e}")
++    if 'expected' in str(e).lower() and 'found' in str(e):
++        print("  ✅ PASS - Correctly reports wrong order!")
++    else:
++        print("  ❌ FAIL - Error message is not clear")
++
++print()
++print("=" * 60)
++print("All tests completed!")
++print("=" * 60)
