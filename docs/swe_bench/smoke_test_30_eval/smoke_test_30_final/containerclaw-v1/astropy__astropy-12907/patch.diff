@@ -1,0 +1,103 @@
+diff --git a/astropy/modeling/separable.py b/astropy/modeling/separable.py
+index a308e27..45bea36 100644
+--- a/astropy/modeling/separable.py
++++ b/astropy/modeling/separable.py
+@@ -242,7 +242,7 @@ def _cstack(left, right):
+         cright = _coord_matrix(right, 'right', noutp)
+     else:
+         cright = np.zeros((noutp, right.shape[1]))
+-        cright[-right.shape[0]:, -right.shape[1]:] = 1
++        cright[-right.shape[0]:, -right.shape[1]:] = right
+ 
+     return np.hstack([cleft, cright])
+ 
+diff --git a/astropy/modeling/tests/test_separable.py b/astropy/modeling/tests/test_separable.py
+index 8dfe5c8..7daf5f7 100644
+--- a/astropy/modeling/tests/test_separable.py
++++ b/astropy/modeling/tests/test_separable.py
+@@ -148,3 +148,36 @@ def test_custom_model_separable():
+ 
+     assert not model_c().separable
+     assert np.all(separability_matrix(model_c()) == [True, True])
++
++
++def test_nested_compound_model_separability():
++    """Test separability_matrix with nested compound models using & operator.
++    
++    This tests the fix for the bug where nested compound models would lose
++    their separability information when combined with the & operator.
++    """
++    # Create a nested compound model: Linear1D(10) & Linear1D(5)
++    # This should be separable (each output depends only on its own input)
++    nested = models.Linear1D(10) & models.Linear1D(5)
++    
++    # The separability matrix should be identity-like (block diagonal)
++    # showing that each output is independent
++    matrix = separability_matrix(nested)
++    expected = np.array([[True, False], [False, True]])
++    assert np.all(matrix == expected), f"Expected {expected}, got {matrix}"
++    
++    # Test combining with another model using &
++    # Shift(1) & (Linear1D(10) & Linear1D(5))
++    combined = models.Shift(1) & nested
++    matrix = separability_matrix(combined)
++    # Should be a 3x3 block diagonal matrix
++    expected = np.array([
++        [True, False, False],
++        [False, True, False],
++        [False, False, True]
++    ])
++    assert np.all(matrix == expected), f"Expected {expected}, got {matrix}"
++    
++    # Verify is_separable returns correct result
++    assert is_separable(nested) == [True, True]
++    assert is_separable(combined) == [True, True, True]
+diff --git a/test_separability_bug.py b/test_separability_bug.py
+new file mode 100644
+index 0000000..3ca538d
+--- /dev/null
++++ b/test_separability_bug.py
+@@ -0,0 +1,43 @@
++"""Test script to reproduce the separability_matrix bug with nested CompoundModels."""
++
++from astropy.modeling import models as m
++from astropy.modeling.separable import separability_matrix
++import numpy as np
++
++print("=" * 60)
++print("Testing separability_matrix with nested CompoundModels")
++print("=" * 60)
++
++# Test 1: Simple compound model
++print("\n1. Simple compound model: Linear1D(10) & Linear1D(5)")
++cm = m.Linear1D(10) & m.Linear1D(5)
++result1 = separability_matrix(cm)
++print(f"Result:\n{result1}")
++print(f"Expected: diagonal matrix (separable)")
++expected1 = np.array([[True, False], [False, True]])
++print(f"Match: {np.array_equal(result1, expected1)}")
++
++# Test 2: More complex model
++print("\n2. Complex model: Pix2Sky_TAN() & Linear1D(10) & Linear1D(5)")
++result2 = separability_matrix(m.Pix2Sky_TAN() & m.Linear1D(10) & m.Linear1D(5))
++print(f"Result:\n{result2}")
++print(f"Expected: block diagonal (separable)")
++expected2 = np.array([[True, True, False, False],
++                      [True, True, False, False],
++                      [False, False, True, False],
++                      [False, False, False, True]])
++print(f"Match: {np.array_equal(result2, expected2)}")
++
++# Test 3: Nested compound model (THE BUG)
++print("\n3. Nested compound model: Pix2Sky_TAN() & cm")
++print(f"   where cm = Linear1D(10) & Linear1D(5)")
++result3 = separability_matrix(m.Pix2Sky_TAN() & cm)
++print(f"Result:\n{result3}")
++print(f"Expected: block diagonal (separable) - same as test 2")
++print(f"Expected:\n{expected2}")
++print(f"Match: {np.array_equal(result3, expected2)}")
++
++if not np.array_equal(result3, expected2):
++    print("\n❌ BUG CONFIRMED: Nested compound model produces incorrect separability matrix!")
++else:
++    print("\n✓ No bug detected - results match expected values")

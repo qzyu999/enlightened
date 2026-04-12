@@ -1,0 +1,126 @@
+2026-04-12 04:47:36,459 - INFO - >>>>> Applied Patch:
+/tmp/patch.diff:61: trailing whitespace.
+    
+/tmp/patch.diff:65: trailing whitespace.
+    
+/tmp/patch.diff:146: trailing whitespace.
+    
+/tmp/patch.diff:167: trailing whitespace.
+    
+Checking patch astropy/timeseries/core.py...
+Checking patch astropy/timeseries/tests/test_common.py...
+Checking patch minimal_bug_demo.py...
+Checking patch test_bug_repro.py...
+Checking patch test_fix.py...
+Checking patch test_fixed_logic.py...
+Applied patch astropy/timeseries/core.py cleanly.
+Applied patch astropy/timeseries/tests/test_common.py cleanly.
+Applied patch minimal_bug_demo.py cleanly.
+Applied patch test_bug_repro.py cleanly.
+Applied patch test_fix.py cleanly.
+Applied patch test_fixed_logic.py cleanly.
+warning: 4 lines add whitespace errors.
+
+2026-04-12 04:47:39,193 - INFO - Git diff before:
+diff --git a/astropy/timeseries/core.py b/astropy/timeseries/core.py
+index c279f35f8..8278656a4 100644
+--- a/astropy/timeseries/core.py
++++ b/astropy/timeseries/core.py
+@@ -76,9 +76,18 @@ class BaseTimeSeries(QTable):
+ 
+             elif self.colnames[:len(required_columns)] != required_columns:
+ 
+-                raise ValueError("{} object is invalid - expected '{}' "
+-                                 "as the first column{} but found '{}'"
+-                                 .format(self.__class__.__name__, required_columns[0], plural, self.colnames[0]))
++                # Check if columns are missing vs. wrong order
++                missing_columns = [col for col in required_columns if col not in self.colnames]
++                if missing_columns:
++                    # Report missing columns
++                    missing_str = ', '.join(repr(col) for col in missing_columns)
++                    raise ValueError("{} object is invalid - missing required column{}: {}"
++                                     .format(self.__class__.__name__, 's' if len(missing_columns) > 1 else '', missing_str))
++                else:
++                    # Columns exist but in wrong order
++                    raise ValueError("{} object is invalid - expected '{}' "
++                                     "as the first column{} but found '{}'"
++                                     .format(self.__class__.__name__, required_columns[0], plural, self.colnames[0]))
+ 
+             if (self._required_columns_relax
+                     and self._required_columns == self.colnames[:len(self._required_columns)]):
+diff --git a/astropy/timeseries/tests/test_common.py b/astropy/timeseries/tests/test_common.py
+index c873ac655..3f8e5015b 100644
+--- a/astropy/timeseries/tests/test_common.py
++++ b/astropy/timeseries/tests/test_common.py
+@@ -60,6 +60,16 @@ class CommonTimeSeriesTests:
+             ts.remove_columns(ts.colnames)
+         assert 'TimeSeries object is invalid' in exc.value.args[0]
+ 
++    def test_missing_column_error_message(self):
++        # Test that missing column error message is clear and actionable
++        ts = self.series.copy()
++        ts.remove_columns(['a', 'b', 'c'])  # Keep only 'time'
++        with pytest.raises(ValueError) as exc:
++            ts.remove_columns(['time'])  # Now all columns removed
++        error_msg = exc.value.args[0]
++        # Should mention missing columns, not misleading "expected X but found X"
++        assert 'missing required column' in error_msg
++
+     def test_join(self):
+         ts_other = self.series.copy()
+         ts_other.add_row(self._row)
+
+2026-04-12 04:49:09,408 - INFO - Test runtime: 89.79 seconds
+2026-04-12 04:49:09,409 - INFO - Test output for astropy__astropy-13033 written to logs/run_evaluation/smoke_test_30_final/containerclaw-v1/astropy__astropy-13033/test_output.txt
+2026-04-12 04:49:09,953 - INFO - Git diff after:
+diff --git a/astropy/timeseries/core.py b/astropy/timeseries/core.py
+index c279f35f8..8278656a4 100644
+--- a/astropy/timeseries/core.py
++++ b/astropy/timeseries/core.py
+@@ -76,9 +76,18 @@ class BaseTimeSeries(QTable):
+ 
+             elif self.colnames[:len(required_columns)] != required_columns:
+ 
+-                raise ValueError("{} object is invalid - expected '{}' "
+-                                 "as the first column{} but found '{}'"
+-                                 .format(self.__class__.__name__, required_columns[0], plural, self.colnames[0]))
++                # Check if columns are missing vs. wrong order
++                missing_columns = [col for col in required_columns if col not in self.colnames]
++                if missing_columns:
++                    # Report missing columns
++                    missing_str = ', '.join(repr(col) for col in missing_columns)
++                    raise ValueError("{} object is invalid - missing required column{}: {}"
++                                     .format(self.__class__.__name__, 's' if len(missing_columns) > 1 else '', missing_str))
++                else:
++                    # Columns exist but in wrong order
++                    raise ValueError("{} object is invalid - expected '{}' "
++                                     "as the first column{} but found '{}'"
++                                     .format(self.__class__.__name__, required_columns[0], plural, self.colnames[0]))
+ 
+             if (self._required_columns_relax
+                     and self._required_columns == self.colnames[:len(self._required_columns)]):
+diff --git a/astropy/timeseries/tests/test_common.py b/astropy/timeseries/tests/test_common.py
+index c873ac655..3f8e5015b 100644
+--- a/astropy/timeseries/tests/test_common.py
++++ b/astropy/timeseries/tests/test_common.py
+@@ -60,6 +60,16 @@ class CommonTimeSeriesTests:
+             ts.remove_columns(ts.colnames)
+         assert 'TimeSeries object is invalid' in exc.value.args[0]
+ 
++    def test_missing_column_error_message(self):
++        # Test that missing column error message is clear and actionable
++        ts = self.series.copy()
++        ts.remove_columns(['a', 'b', 'c'])  # Keep only 'time'
++        with pytest.raises(ValueError) as exc:
++            ts.remove_columns(['time'])  # Now all columns removed
++        error_msg = exc.value.args[0]
++        # Should mention missing columns, not misleading "expected X but found X"
++        assert 'missing required column' in error_msg
++
+     def test_join(self):
+         ts_other = self.series.copy()
+         ts_other.add_row(self._row)
+
+2026-04-12 04:49:09,954 - INFO - Grading answer for astropy__astropy-13033...
+2026-04-12 04:49:09,983 - INFO - report: {'astropy__astropy-13033': {'patch_is_None': False, 'patch_exists': True, 'patch_successfully_applied': True, 'resolved': False, 'tests_status': {'FAIL_TO_PASS': {'success': [], 'failure': ['astropy/timeseries/tests/test_sampled.py::test_required_columns']}, 'PASS_TO_PASS': {'success': ['astropy/timeseries/tests/test_sampled.py::test_empty_initialization', 'astropy/timeseries/tests/test_sampled.py::test_initialize_only_time', 'astropy/timeseries/tests/test_sampled.py::test_initialization_with_data', 'astropy/timeseries/tests/test_sampled.py::test_initialize_only_data', 'astropy/timeseries/tests/test_sampled.py::test_initialization_with_table', 'astropy/timeseries/tests/test_sampled.py::test_initialization_missing_time_delta', 'astropy/timeseries/tests/test_sampled.py::test_initialization_invalid_time_and_time_start', 'astropy/timeseries/tests/test_sampled.py::test_initialization_invalid_time_delta', 'astropy/timeseries/tests/test_sampled.py::test_initialization_with_time_in_data', 'astropy/timeseries/tests/test_sampled.py::test_initialization_n_samples', 'astropy/timeseries/tests/test_sampled.py::test_initialization_length_mismatch', 'astropy/timeseries/tests/test_sampled.py::test_initialization_invalid_both_time_and_time_delta', 'astropy/timeseries/tests/test_sampled.py::test_fold', 'astropy/timeseries/tests/test_sampled.py::test_fold_invalid_options', 'astropy/timeseries/tests/test_sampled.py::test_read_time_missing', 'astropy/timeseries/tests/test_sampled.py::test_read_time_wrong', 'astropy/timeseries/tests/test_sampled.py::test_read', 'astropy/timeseries/tests/test_sampled.py::test_periodogram[BoxLeastSquares]', 'astropy/timeseries/tests/test_sampled.py::test_periodogram[LombScargle]'], 'failure': ['astropy/timeseries/tests/test_sampled.py::test_empty_initialization_invalid']}, 'FAIL_TO_FAIL': {'success': [], 'failure': []}, 'PASS_TO_FAIL': {'success': [], 'failure': []}}}}
+Result for astropy__astropy-13033: resolved: False

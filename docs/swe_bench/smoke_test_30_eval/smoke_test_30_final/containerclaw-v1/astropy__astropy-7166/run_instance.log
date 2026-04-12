@@ -1,0 +1,79 @@
+2026-04-12 04:48:10,507 - INFO - >>>>> Applied Patch:
+/tmp/patch.diff:70: trailing whitespace.
+    
+/tmp/patch.diff:132: trailing whitespace.
+    
+Checking patch astropy/utils/misc.py...
+Checking patch astropy/utils/tests/test_misc.py...
+Checking patch test_property_docstring_bug.py...
+Checking patch test_property_docstring_standalone.py...
+Applied patch astropy/utils/misc.py cleanly.
+Applied patch astropy/utils/tests/test_misc.py cleanly.
+Applied patch test_property_docstring_bug.py cleanly.
+Applied patch test_property_docstring_standalone.py cleanly.
+warning: 2 lines add whitespace errors.
+
+2026-04-12 04:48:13,117 - INFO - Git diff before:
+diff --git a/astropy/utils/misc.py b/astropy/utils/misc.py
+index de3fb01d1..cceaeb957 100644
+--- a/astropy/utils/misc.py
++++ b/astropy/utils/misc.py
+@@ -528,7 +528,7 @@ class InheritDocstrings(type):
+                 not key.startswith('_'))
+ 
+         for key, val in dct.items():
+-            if (inspect.isfunction(val) and
++            if ((inspect.isfunction(val) or isinstance(val, property)) and
+                 is_public_member(key) and
+                 val.__doc__ is None):
+                 for base in cls.__mro__[1:]:
+diff --git a/astropy/utils/tests/test_misc.py b/astropy/utils/tests/test_misc.py
+index 4f632e8d1..daa7ccb68 100644
+--- a/astropy/utils/tests/test_misc.py
++++ b/astropy/utils/tests/test_misc.py
+@@ -89,6 +89,23 @@ def test_inherit_docstrings():
+         assert Subclass.__call__.__doc__ == "FOO"
+ 
+ 
++def test_inherit_docstrings_property():
++    """Test that InheritDocstrings works for properties, not just methods."""
++    class Base(metaclass=misc.InheritDocstrings):
++        @property
++        def my_property(self):
++            """This is the base property docstring."""
++            return 42
++
++    class Subclass(Base):
++        @property
++        def my_property(self):
++            # No docstring - should inherit from base
++            return 100
++
++    assert Subclass.my_property.__doc__ == "This is the base property docstring."
++
++
+ def test_set_locale():
+     # First, test if the required locales are available
+     current = locale.setlocale(locale.LC_ALL)
+
+2026-04-12 04:48:23,070 - INFO - Test runtime: 9.83 seconds
+2026-04-12 04:48:23,070 - INFO - Test output for astropy__astropy-7166 written to logs/run_evaluation/smoke_test_30_final/containerclaw-v1/astropy__astropy-7166/test_output.txt
+2026-04-12 04:48:23,486 - INFO - Git diff after:
+diff --git a/astropy/utils/misc.py b/astropy/utils/misc.py
+index de3fb01d1..cceaeb957 100644
+--- a/astropy/utils/misc.py
++++ b/astropy/utils/misc.py
+@@ -528,7 +528,7 @@ class InheritDocstrings(type):
+                 not key.startswith('_'))
+ 
+         for key, val in dct.items():
+-            if (inspect.isfunction(val) and
++            if ((inspect.isfunction(val) or isinstance(val, property)) and
+                 is_public_member(key) and
+                 val.__doc__ is None):
+                 for base in cls.__mro__[1:]:
+
+2026-04-12 04:48:23,486 - INFO - Git diff changed after running eval script
+2026-04-12 04:48:23,486 - INFO - Grading answer for astropy__astropy-7166...
+2026-04-12 04:48:23,493 - INFO - report: {'astropy__astropy-7166': {'patch_is_None': False, 'patch_exists': True, 'patch_successfully_applied': True, 'resolved': True, 'tests_status': {'FAIL_TO_PASS': {'success': ['astropy/utils/tests/test_misc.py::test_inherit_docstrings'], 'failure': []}, 'PASS_TO_PASS': {'success': ['astropy/utils/tests/test_misc.py::test_isiterable', 'astropy/utils/tests/test_misc.py::test_signal_number_to_name_no_failure', 'astropy/utils/tests/test_misc.py::test_skip_hidden', 'astropy/utils/tests/test_misc.py::test_JsonCustomEncoder', 'astropy/utils/tests/test_misc.py::test_check_broadcast', 'astropy/utils/tests/test_misc.py::test_dtype_bytes_or_chars'], 'failure': []}, 'FAIL_TO_FAIL': {'success': [], 'failure': []}, 'PASS_TO_FAIL': {'success': [], 'failure': []}}}}
+Result for astropy__astropy-7166: resolved: True

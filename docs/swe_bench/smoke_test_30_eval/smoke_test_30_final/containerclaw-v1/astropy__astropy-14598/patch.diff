@@ -1,0 +1,845 @@
+diff --git a/astropy/io/fits/card.py b/astropy/io/fits/card.py
+index 1b3285d..480d695 100644
+--- a/astropy/io/fits/card.py
++++ b/astropy/io/fits/card.py
+@@ -64,7 +64,7 @@ class Card(_Verify):
+ 
+     # Used in cards using the CONTINUE convention which expect a string
+     # followed by an optional comment
+-    _strg = r"\'(?P<strg>([ -~]+?|\'\'|) *?)\'(?=$|/| )"
++    _strg = r"\'(?P<strg>(?:[^']|'')* *)\'(?=$|/| )"
+     _comm_field = r"(?P<comm_field>(?P<sepr>/ *)(?P<comm>(.|\n)*))"
+     _strg_comment_RE = re.compile(f"({_strg})? *{_comm_field}?")
+ 
+diff --git a/test_bug_cases.py b/test_bug_cases.py
+new file mode 100644
+index 0000000..922cd1e
+--- /dev/null
++++ b/test_bug_cases.py
+@@ -0,0 +1,69 @@
++"""Test with the actual failing cases from the bug report."""
++import re
++
++# Current regex from card.py line 67
++_strg_current = r"\'(?P<strg>([ -~]+?|\'\'|) *?)\'(?=$|/| )"
++
++# Proposed fix
++_strg_fixed = r"\'(?P<strg>(?:[ -~]|'')*?)\'(?=$|/| )"
++
++def test_with_regex(name, regex):
++    print(f"\n{name}:")
++    print("=" * 70)
++    
++    # Test case 1: from bug report
++    failures = []
++    for n in range(60, 70):
++        test_str = "'" + "x" * n + "''"
++        m = re.match(regex, test_str)
++        if m:
++            captured = m.group('strg')
++            value = re.sub("''", "'", captured)
++            expected = "x" * n + "'"
++            if value != expected:
++                failures.append((n, value, expected))
++    
++    if failures:
++        print(f"  FAILURES: {len(failures)}")
++        for n, got, expected in failures:
++            print(f"    n={n}: got {repr(got)}, expected {repr(expected)}")
++    else:
++        print("  All tests passed!")
++    
++    return len(failures) == 0
++
++# Test case 2: from bug report
++def test_case_2(name, regex):
++    print(f"\n{name}:")
++    print("=" * 70)
++    
++    failures = []
++    for n in range(50, 70):
++        test_str = "'" + "x" * n + "''" + "x"*10 + "'"
++        m = re.match(regex, test_str)
++        if m:
++            captured = m.group('strg')
++            value = re.sub("''", "'", captured)
++            expected = "x" * n + "'" + "x"*10
++            if value != expected:
++                failures.append((n, len(expected), value, expected))
++    
++    if failures:
++        print(f"  FAILURES: {len(failures)}")
++        for n, length, got, expected in failures:
++            print(f"    n={n}, len={length}: got {repr(got)}, expected {repr(expected)}")
++    else:
++        print("  All tests passed!")
++    
++    return len(failures) == 0
++
++result1_current = test_with_regex("Test Case 1 - Current Regex", _strg_current)
++result1_fixed = test_with_regex("Test Case 1 - Fixed Regex", _strg_fixed)
++
++result2_current = test_case_2("Test Case 2 - Current Regex", _strg_current)
++result2_fixed = test_case_2("Test Case 2 - Fixed Regex", _strg_fixed)
++
++print("\n" + "=" * 70)
++print("SUMMARY:")
++print(f"  Current regex: Test 1 = {'PASS' if result1_current else 'FAIL'}, Test 2 = {'PASS' if result2_current else 'FAIL'}")
++print(f"  Fixed regex:   Test 1 = {'PASS' if result1_fixed else 'FAIL'}, Test 2 = {'PASS' if result2_fixed else 'FAIL'}")
+diff --git a/test_card_format.py b/test_card_format.py
+new file mode 100644
+index 0000000..66954bb
+--- /dev/null
++++ b/test_card_format.py
+@@ -0,0 +1,67 @@
++"""Test with actual FITS card format (80 chars)."""
++import re
++
++# Current regex from card.py line 67
++_strg_current = r"\'(?P<strg>([ -~]+?|\'\'|) *?)\'(?=$|/| )"
++
++# The full value regex from card.py (simplified)
++# Looking at lines 83-112, the _value_FSC_RE is used
++# But for parsing, _value_NFSC_RE is used (line 761)
++
++# Let me look at what _split returns and what gets passed to the regex
++
++CARD_LENGTH = 80
++KEYWORD_LENGTH = 8
++VALUE_INDICATOR = "= "
++
++def make_card(keyword, value):
++    """Create a FITS card image (80 chars)."""
++    # Keyword is 8 chars, then "= ", then value in quotes, padded to 80
++    kw = keyword[:8].ljust(8)
++    # Value needs to be quoted
++    quoted_value = "'" + value + "'"
++    # Pad to fill 80 chars
++    rest = CARD_LENGTH - len(kw) - len(VALUE_INDICATOR) - len(quoted_value)
++    if rest > 0:
++        quoted_value = quoted_value + " " * rest
++    return kw + VALUE_INDICATOR + quoted_value
++
++def parse_value_from_card(card_image):
++    """Simulate what _parse_value does."""
++    # _split is called first (line 761)
++    # It splits at the value indicator
++    delim_index = card_image.index(VALUE_INDICATOR)
++    keyword = card_image[:delim_index]
++    valuecomment = card_image[delim_index + len(VALUE_INDICATOR):]
++    
++    # Then _value_NFSC_RE is matched against valuecomment
++    # Let's use the _strg regex directly since that's where the issue is
++    m = re.match(_strg_current, valuecomment)
++    if m and m.group("strg") is not None:
++        value = re.sub("''", "'", m.group("strg"))
++        return value
++    return None
++
++print("Testing with actual FITS card format:")
++print("=" * 70)
++
++failures = []
++for n in range(60, 70):
++    value = "x" * n + "''"
++    card = make_card('CONFIG', value)
++    parsed = parse_value_from_card(card)
++    expected = "x" * n + "'"
++    
++    status = "✓" if parsed == expected else "✗"
++    print(f"{status} n={n}: card={repr(card[:60])}... parsed={repr(parsed)} expected={repr(expected)}")
++    
++    if parsed != expected:
++        failures.append((n, card, parsed, expected))
++
++if failures:
++    print(f"\n{len(failures)} failures found!")
++    for n, card, parsed, expected in failures:
++        print(f"\n  n={n}:")
++        print(f"    Card: {repr(card)}")
++        print(f"    Parsed: {repr(parsed)}")
++        print(f"    Expected: {repr(expected)}")
+diff --git a/test_fits_bug.py b/test_fits_bug.py
+new file mode 100644
+index 0000000..962d383
+--- /dev/null
++++ b/test_fits_bug.py
+@@ -0,0 +1,39 @@
++"""Reproduce the exact bug with FITS card parsing."""
++import re
++
++# Current regex from card.py line 67
++_strg = r"\'(?P<strg>([ -~]+?|\'\'|) *?)\'(?=$|/| )"
++
++def parse_string_value(card_image):
++    """Simulate the parsing logic from card.py._parse_value()"""
++    # Extract the value part after the keyword and equals sign
++    value_part = card_image[KEYWORD_LENGTH:].strip()
++    
++    m = re.match(_strg, value_part)
++    if m:
++        strg = m.group("strg")
++        # This is line 771 in card.py
++        value = re.sub("''", "'", strg)
++        return value
++    return None
++
++KEYWORD_LENGTH = 16
++
++# Test cases that should work
++test_cases = [
++    # (card_image, expected_value)
++    ("CONFIG  = 'abc''           ", "abc'"),
++    ("CONFIG  = 'abc''def'      ", "abc'def"),
++    ("CONFIG  = 'abc''def''     ", "abc'def'"),
++    ("CONFIG  = ''              ", ""),
++]
++
++print("Testing string parsing:")
++print("=" * 60)
++for card_image, expected in test_cases:
++    result = parse_string_value(card_image)
++    status = "✓" if result == expected else "✗"
++    print(f"{status} Card: {repr(card_image)}")
++    print(f"  Expected: {repr(expected)}")
++    print(f"  Got:      {repr(result)}")
++    print()
+diff --git a/test_fits_bug2.py b/test_fits_bug2.py
+new file mode 100644
+index 0000000..1ab56b8
+--- /dev/null
++++ b/test_fits_bug2.py
+@@ -0,0 +1,59 @@
++"""Reproduce the exact bug with FITS card parsing."""
++import re
++
++# Current regex from card.py line 67
++_strg = r"\'(?P<strg>([ -~]+?|\'\'|) *?)\'(?=$|/| )"
++
++def split_card(card_image):
++    """Simulate the _split method from card.py"""
++    KEYWORD_LENGTH = 16
++    value_indicator = "="
++    
++    try:
++        delim_index = card_image.index(value_indicator)
++    except ValueError:
++        delim_index = None
++    
++    if delim_index is None:
++        keyword = card_image[:KEYWORD_LENGTH]
++        valuecomment = card_image[KEYWORD_LENGTH:]
++    elif delim_index > 10 and card_image[:9] != "HIERARCH ":
++        keyword = card_image[:8]
++        valuecomment = card_image[8:]
++    else:
++        keyword, valuecomment = card_image.split(value_indicator, 1)
++    
++    return keyword.strip(), valuecomment.strip()
++
++def parse_string_value(card_image):
++    """Simulate the parsing logic from card.py._parse_value()"""
++    keyword, value_part = split_card(card_image)
++    
++    m = re.match(_strg, value_part)
++    if m:
++        strg = m.group("strg")
++        # This is line 771 in card.py
++        value = re.sub("''", "'", strg)
++        return value
++    return None
++
++# Test cases that should work
++test_cases = [
++    # (card_image, expected_value)
++    ("CONFIG  = 'abc''           ", "abc'"),
++    ("CONFIG  = 'abc''def'      ", "abc'def"),
++    ("CONFIG  = 'abc''def''     ", "abc'def'"),
++    ("CONFIG  = ''              ", ""),
++]
++
++print("Testing string parsing:")
++print("=" * 60)
++for card_image, expected in test_cases:
++    keyword, value_part = split_card(card_image)
++    result = parse_string_value(card_image)
++    status = "✓" if result == expected else "✗"
++    print(f"{status} Card: {repr(card_image)}")
++    print(f"  value_part: {repr(value_part)}")
++    print(f"  Expected: {repr(expected)}")
++    print(f"  Got:      {repr(result)}")
++    print()
+diff --git a/test_long_strings.py b/test_long_strings.py
+new file mode 100644
+index 0000000..c07a5c3
+--- /dev/null
++++ b/test_long_strings.py
+@@ -0,0 +1,29 @@
++"""Test with longer strings to understand the bug."""
++import re
++
++# Current regex from card.py line 67
++_strg_current = r"\'(?P<strg>([ -~]+?|\'\'|) *?)\'(?=$|/| )"
++
++def test_long_strings():
++    print("Testing with longer strings:")
++    print("=" * 60)
++    
++    for n in range(60, 70):
++        test_str = "'" + "x" * n + "''"
++        m = re.match(_strg_current, test_str)
++        if m:
++            captured = m.group("strg")
++            value = re.sub("''", "'", captured)
++            expected = "x" * n + "'"
++            passed = value == expected
++            status = "✓" if passed else "✗"
++            print(f"{status} n={n}: {test_str!r}")
++            if not passed:
++                print(f"      captured: {captured!r}")
++                print(f"      value:    {value!r}")
++                print(f"      expected: {expected!r}")
++        else:
++            print(f"✗ n={n}: {test_str!r} -> NO MATCH")
++
++if __name__ == "__main__":
++    test_long_strings()
+diff --git a/test_quote_bug.py b/test_quote_bug.py
+new file mode 100644
+index 0000000..a4f6cbf
+--- /dev/null
++++ b/test_quote_bug.py
+@@ -0,0 +1,27 @@
++"""Test to reproduce the FITS Card quote handling bug."""
++from astropy.io import fits
++
++def test_double_quote_preservation():
++    """Test that double single-quotes are preserved correctly."""
++    print("Test 1: Double quotes at end of string")
++    for n in range(60, 70):
++        card1 = fits.Card('CONFIG', "x" * n + "''")
++        card2 = fits.Card.fromstring(str(card1))  # Should be the same as card1
++        result = card1.value == card2.value
++        print(f"n={n}: {result}")
++        if not result:
++            print(f"  card1.value: {repr(card1.value)}")
++            print(f"  card2.value: {repr(card2.value)}")
++    
++    print("\nTest 2: Double quotes in middle of string")
++    for n in range(50, 70):
++        card1 = fits.Card('CONFIG', "x" * n + "''" + "x"*10)
++        card2 = fits.Card.fromstring(str(card1))
++        result = card1.value == card2.value
++        print(f"n={n}, len={len(card1.value)}: {result}")
++        if not result:
++            print(f"  card1.value: {repr(card1.value)}")
++            print(f"  card2.value: {repr(card2.value)}")
++
++if __name__ == "__main__":
++    test_double_quote_preservation()
+diff --git a/test_quote_bug_standalone.py b/test_quote_bug_standalone.py
+new file mode 100644
+index 0000000..0dd3cf9
+--- /dev/null
++++ b/test_quote_bug_standalone.py
+@@ -0,0 +1,94 @@
++"""Test to reproduce the FITS Card quote handling bug without importing astropy."""
++import re
++
++# Constants from card.py
++KEYWORD_LENGTH = 16
++
++# Current regex from card.py line 67
++_value_NFSC_RE = re.compile(
++    r"\s*(?P<bool>T|F)|\s*(?P<strg>\'([ -~]+?|\'\'|) *?)\'(?=$|/| )|\s*(?P<numr>[+-]?[0-9]*(\.[0-9]*)?[eE][+-]?[0-9]+|[+-]?[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?|[+-]?[0-9]+([eE][+-]?[0-9]+)?)\s*(?=/|$)"
++)
++
++def _format_value(value):
++    """Converts a card value to its appropriate string representation."""
++    if isinstance(value, str):
++        if value == "":
++            return "''"
++        else:
++            exp_val_str = value.replace("'", "''")
++            val_str = f"'{exp_val_str:8}'"
++            return f"{val_str:20}"
++    return str(value)
++
++def _format_card(keyword, value):
++    """Format a card image."""
++    keyword_str = f"{keyword[:8]:<8}"
++    value_str = _format_value(value)
++    return f"{keyword_str} = {value_str}".ljust(80)
++
++def _split(card_image):
++    """Split the card image between the keyword and the rest of the card."""
++    value_indicator = "="
++    
++    try:
++        delim_index = card_image.index(value_indicator)
++    except ValueError:
++        delim_index = None
++    
++    if delim_index is None:
++        keyword = card_image[:KEYWORD_LENGTH]
++        valuecomment = card_image[KEYWORD_LENGTH:]
++    elif delim_index > 10 and card_image[:9] != "HIERARCH ":
++        keyword = card_image[:8]
++        valuecomment = card_image[8:]
++    else:
++        keyword, valuecomment = card_image.split(value_indicator, 1)
++    
++    return keyword.strip(), valuecomment.strip()
++
++def _parse_value(card_image):
++    """Extract the keyword value from the card image."""
++    keyword, value_part = _split(card_image)
++    
++    m = _value_NFSC_RE.match(value_part)
++    
++    if m is None:
++        raise ValueError(f"Unparsable card ({keyword})")
++    
++    if m.group("bool") is not None:
++        value = m.group("bool") == "T"
++    elif m.group("strg") is not None:
++        value = re.sub("''", "'", m.group("strg"))
++    elif m.group("numr") is not None:
++        value = float(m.group("numr"))
++    
++    return value
++
++def test_double_quote_preservation():
++    """Test that double single-quotes are preserved correctly."""
++    print("Test 1: Double quotes at end of string")
++    for n in range(60, 70):
++        original_value = "x" * n + "'"
++        card_image = _format_card('CONFIG', original_value)
++        parsed_value = _parse_value(card_image)
++        result = original_value == parsed_value
++        print(f"n={n}: {result}")
++        if not result:
++            print(f"  original_value: {repr(original_value)}")
++            print(f"  card_image:     {repr(card_image)}")
++            print(f"  parsed_value:   {repr(parsed_value)}")
++    
++    print("\nTest 2: Double quotes in middle of string")
++    for n in range(50, 70):
++        original_value = "x" * n + "'" + "x"*10
++        card_image = _format_card('CONFIG', original_value)
++        parsed_value = _parse_value(card_image)
++        result = original_value == parsed_value
++        print(f"n={n}, len={len(original_value)}: {result}")
++        if not result:
++            print(f"  original_value: {repr(original_value)}")
++            print(f"  card_image:     {repr(card_image)}")
++            print(f"  parsed_value:   {repr(parsed_value)}")
++
++if __name__ == "__main__":
++    test_double_quote_preservation()
+diff --git a/test_regex.py b/test_regex.py
+new file mode 100644
+index 0000000..d32057a
+--- /dev/null
++++ b/test_regex.py
+@@ -0,0 +1,22 @@
++"""Minimal test to understand the quote handling bug."""
++import re
++
++# This is the regex from card.py line 67
++_strg = r"\'(?P<strg>([ -~]+?|\'\'|) *?)\'(?=$|/| )"
++
++# Test cases
++test_strings = [
++    "'" + "x" * 65 + "''",
++    "'" + "x" * 64 + "''",
++    "'" + "x" * 66 + "''",
++]
++
++for test_str in test_strings:
++    print(f"Input: {repr(test_str)}")
++    m = re.match(_strg, test_str)
++    if m:
++        print(f"  Matched strg group: {repr(m.group('strg'))}")
++        # This is what the current code does (line 771)
++        value = re.sub("''", "'", m.group("strg"))
++        print(f"  After re.sub: {repr(value)}")
++    print()
+diff --git a/test_regex_analysis.py b/test_regex_analysis.py
+new file mode 100644
+index 0000000..bb33a5f
+--- /dev/null
++++ b/test_regex_analysis.py
+@@ -0,0 +1,64 @@
++"""Analyze the regex bug and test the fix."""
++import re
++
++# Current regex from card.py line 67
++_strg_current = r"\'(?P<strg>([ -~]+?|\'\'|) *?)\'(?=$|/| )"
++
++# The problem: the regex uses non-greedy matching ([ -~]+?) which can match
++# any printable ASCII character including the quote character in ''.
++# When we have 'xxxx...xxxx''' (string ending with escaped quote), the regex
++# matches the first ' after xxxx...xxxx as the closing quote, leaving the
++# last two quotes unmatched.
++
++# Proposed fix: use a character class that explicitly excludes the quote
++# character, and handle '' as a separate alternative.
++_strg_fixed = r"\'(?P<strg>(?:[ -~&&[^']]|'')*?)\'(?=$|/| )"
++
++# Actually, Python doesn't support && in character classes. Let's use a different approach.
++# We can use [ -~] but exclude ' by using [ -&*-~] (space to tilde, excluding apostrophe)
++_strg_fixed2 = r"\'(?P<strg>(?:[ -&*-~]|'')*?)\'(?=$|/| )"
++
++# Even simpler: just match anything that's not a quote, or ''
++_strg_fixed3 = r"\'(?P<strg>(?:[^']|'')*?)\'(?=$|/| )"
++
++def test_regex(name, pattern):
++    print(f"\nTesting {name}:")
++    print("=" * 60)
++    
++    test_cases = [
++        ("'abc''", "abc'"),  # string ending with escaped quote
++        ("'abc''def'", "abc'def"),  # string with escaped quote in middle
++        ("'abc''def''", "abc'def'"),  # string with escaped quotes
++        ("''", ""),  # empty string (null string in FITS)
++        ("'hello world'", "hello world"),  # normal string
++        ("'test''value'''", "test'value'"),  # multiple escaped quotes
++    ]
++    
++    regex = re.compile(pattern)
++    all_pass = True
++    for test_str, expected in test_cases:
++        m = regex.match(test_str)
++        if m:
++            captured = m.group("strg")
++            value = re.sub("''", "'", captured)
++            passed = value == expected
++            all_pass = all_pass and passed
++            status = "✓" if passed else "✗"
++            print(f"{status} {test_str!r} -> {value!r} (expected {expected!r})")
++        else:
++            print(f"✗ {test_str!r} -> NO MATCH (expected {expected!r})")
++            all_pass = False
++    
++    return all_pass
++
++# Test current regex
++current_pass = test_regex("Current regex", _strg_current)
++
++# Test fixed regexes
++fixed1_pass = test_regex("Fixed regex 1", _strg_fixed2)
++fixed2_pass = test_regex("Fixed regex 2", _strg_fixed3)
++
++print(f"\n\nSummary:")
++print(f"  Current regex: {'PASS' if current_pass else 'FAIL'}")
++print(f"  Fixed regex 1: {'PASS' if fixed1_pass else 'FAIL'}")
++print(f"  Fixed regex 2: {'PASS' if fixed2_pass else 'FAIL'}")
+diff --git a/test_regex_bug.py b/test_regex_bug.py
+new file mode 100644
+index 0000000..7c56cc5
+--- /dev/null
++++ b/test_regex_bug.py
+@@ -0,0 +1,81 @@
++"""Test to verify the regex bug with escaped quotes at the end of strings."""
++import re
++
++# Current regex from card.py line 67
++_strg_current = r"\'(?P<strg>([ -~]+?|\'\'|) *?)\'(?=$|/| )"
++
++# Proposed fix: match any character except ', or '' (escaped quote)
++_strg_fixed = r"\'(?P<strg>(?:[^']|'')*?)\'(?=$|/| )"
++
++def test_regex(name, pattern, card_image, expected_value):
++    """Test a regex pattern against a card image."""
++    match = re.search(pattern, card_image)
++    if match:
++        captured = match.group('strg')
++        # Process escaped quotes
++        processed = captured.replace("''", "'")
++        match_result = "✓" if processed == expected_value else "✗"
++        print(f"{match_result} {name}: captured='{captured}', processed='{processed}', expected='{expected_value}'")
++        return processed == expected_value
++    else:
++        print(f"✗ {name}: no match")
++        return False
++
++# Test case: string ending with escaped quote
++test_string = "x" * 60 + "'"  # 60 x's + one quote character
++escaped_string = test_string.replace("'", "''")  # Replace ' with ''
++value_str = f"'{escaped_string:8}'"  # Format with minimum 8 chars
++value_str = f"{value_str:20}"  # Pad to 20 chars
++card_image = f"CONFIG   = {value_str}"
++
++print(f"Card image: {repr(card_image)}")
++print(f"Expected value: {repr(test_string)}")
++print()
++
++print("Current regex:")
++test_regex("Current", _strg_current, card_image, test_string)
++
++print()
++print("Fixed regex:")
++test_regex("Fixed", _strg_fixed, card_image, test_string)
++
++# Test with actual card.py
++print("\n--- Testing with actual card.py ---")
++import sys
++sys.path.insert(0, '/workspace')
++
++# Import just the regex from card.py
++import importlib.util
++spec = importlib.util.spec_from_file_location("card", "/workspace/astropy/io/fits/card.py")
++card_module = importlib.util.module_from_spec(spec)
++
++# We can't fully import card.py due to dependencies, so let's just test the regex directly
++# Read the regex from card.py
++with open("/workspace/astropy/io/fits/card.py", "r") as f:
++    content = f.read()
++    # Find the _strg regex
++    import re as regex_module
++    match = regex_module.search(r'_strg\s*=\s*r"([^"]+)"', content)
++    if match:
++        _strg_from_file = r"'" + match.group(1) + "'"
++        print(f"Regex from card.py: {_strg_from_file}")
++        
++        # Test the regex
++        test_string = "x" * 60 + "'"  # 60 x's + one quote character
++        escaped_string = test_string.replace("'", "''")  # Replace ' with ''
++        value_str = f"'{escaped_string:8}'"  # Format with minimum 8 chars
++        value_str = f"{value_str:20}"  # Pad to 20 chars
++        card_image = f"CONFIG   = {value_str}"
++        
++        print(f"Card image: {repr(card_image)}")
++        print(f"Expected value: {repr(test_string)}")
++        
++        # Test the regex from card.py
++        pattern = regex_module.compile(_strg_from_file)
++        match = pattern.search(card_image)
++        if match:
++            captured = match.group('strg')
++            processed = captured.replace("''", "'")
++            match_result = "✓" if processed == test_string else "✗"
++            print(f"{match_result} card.py regex: captured='{captured}', processed='{processed}', expected='{test_string}'")
++            print(f"Match: {processed == test_string}")
+diff --git a/test_regex_debug.py b/test_regex_debug.py
+new file mode 100644
+index 0000000..669a6e6
+--- /dev/null
++++ b/test_regex_debug.py
+@@ -0,0 +1,25 @@
++"""Debug the regex matching."""
++import re
++
++# Current regex from card.py line 67
++_strg = r"\'(?P<strg>([ -~]+?|\'\'|) *?)\'(?=$|/| )"
++
++# Test the regex directly
++test_strings = [
++    "'abc''           ",
++    "'abc''def'      ",
++    "'abc''def''     ",
++    "''              ",
++    "'hello world'    ",
++]
++
++print("Testing regex directly:")
++print("=" * 60)
++for s in test_strings:
++    m = re.match(_strg, s)
++    if m:
++        print(f"✓ Matched: {repr(s)}")
++        print(f"  strg group: {repr(m.group('strg'))}")
++    else:
++        print(f"✗ No match: {repr(s)}")
++    print()
+diff --git a/test_regex_detailed.py b/test_regex_detailed.py
+new file mode 100644
+index 0000000..3151e7c
+--- /dev/null
++++ b/test_regex_detailed.py
+@@ -0,0 +1,39 @@
++"""Detailed analysis of the regex bug."""
++import re
++
++# Current regex from card.py line 67
++_strg = r"\'(?P<strg>([ -~]+?|\'\'|) *?)\'(?=$|/| )"
++
++# The issue: when we have a string like 'xxxx...xxxx'' (ending with '')
++# The regex should capture: xxxx...xxxx'' (the content between outer quotes)
++# But it's capturing: xxxx...xxxx' (missing one quote)
++
++# Let's trace through what happens:
++test_cases = [
++    ("'abc''", "string ending with escaped quote"),
++    ("'abc''def'", "string with escaped quote in middle"),
++    ("'abc''def''", "string with escaped quotes"),
++    ("''", "empty string (null string in FITS)"),
++    ("'x" + "x" * 64 + "''", "65 chars + '' at end"),
++]
++
++print("Current regex behavior:")
++print("=" * 60)
++for test_str, desc in test_cases:
++    print(f"\nTest: {desc}")
++    print(f"Input: {repr(test_str)}")
++    m = re.match(_strg, test_str)
++    if m:
++        captured = m.group('strg')
++        print(f"  Captured strg: {repr(captured)}")
++        # Current code does this (line 771)
++        value = re.sub("''", "'", captured)
++        print(f"  After re.sub: {repr(value)}")
++    else:
++        print("  No match!")
++
++print("\n" + "=" * 60)
++print("\nExpected behavior:")
++print("In FITS, '' inside a string represents a single quote character.")
++print("So 'abc'' should give us: abc' (the '' becomes a single ')")
++print("And '' should give us: '' (empty string, the null string)")
+diff --git a/test_regex_detailed2.py b/test_regex_detailed2.py
+new file mode 100644
+index 0000000..075f9a6
+--- /dev/null
++++ b/test_regex_detailed2.py
+@@ -0,0 +1,40 @@
++"""Detailed analysis of the regex bug with full card images."""
++import re
++
++# Current regex from card.py line 67
++_strg_current = r"\'(?P<strg>([ -~]+?|\'\'|) *?)\'(?=$|/| )"
++
++def test_with_full_card_image():
++    """Test the regex with full card images."""
++    
++    # Create a card image with a string ending in escaped quote
++    # The value is 60 x's + one quote character
++    value = "x" * 60 + "'"
++    
++    # When written to FITS, the quote is escaped as ''
++    # So the string part becomes: ' + 60 x's + '' + '
++    string_part = "'" + "x" * 60 + "''" + "'"
++    
++    # Full card image (80 chars)
++    card_image = f"CONFIG   = {string_part}" + " " * (80 - len(f"CONFIG   = {string_part}"))
++    
++    print(f"Card image: {repr(card_image)}")
++    print(f"String part: {repr(string_part)}")
++    print(f"Expected value: {repr(value)}")
++    print()
++    
++    # Try to match with current regex
++    match = re.search(_strg_current, card_image)
++    if match:
++        captured = match.group('strg')
++        print(f"Captured: {repr(captured)}")
++        
++        # Process the captured string (replace '' with ')
++        processed = re.sub("''", "'", captured)
++        print(f"Processed: {repr(processed)}")
++        print(f"Match: {processed == value}")
++    else:
++        print("No match!")
++
++if __name__ == "__main__":
++    test_with_full_card_image()
+diff --git a/test_regex_fix.py b/test_regex_fix.py
+new file mode 100644
+index 0000000..6d3774e
+--- /dev/null
++++ b/test_regex_fix.py
+@@ -0,0 +1,52 @@
++"""Test to understand the regex issue better."""
++import re
++
++# Current regex from card.py line 67
++_strg_current = r"\'(?P<strg>([ -~]+?|\'\'|) *?)\'(?=$|/| )"
++
++# The problem: the regex uses non-greedy matching and alternation
++# that doesn't properly handle '' at the end of strings
++
++# Let's test what the regex SHOULD match:
++# In FITS:
++# - Strings are enclosed in single quotes
++# - A single quote character within a string is represented as ''
++# - So 'abc'' should capture: abc'' (then re.sub converts '' to ')
++# - And '' should capture: '' (empty string)
++
++# Proposed fix: match any sequence of printable ASCII or '' pairs
++# This properly handles escaped quotes throughout the string
++_strg_fixed = r"\'(?P<strg>(?:[ -~]|'')*?)\'(?=$|/| )"
++
++test_cases = [
++    ("'abc''", "abc'"),  # string ending with escaped quote
++    ("'abc''def'", "abc'def"),  # string with escaped quote in middle
++    ("'abc''def''", "abc'def'"),  # string with escaped quotes
++    ("''", ""),  # empty string (null string in FITS)
++    ("'hello world'", "hello world"),  # normal string
++    ("'test''value'''", "test'value'"),  # multiple escaped quotes
++]
++
++print("Current regex:")
++print("=" * 70)
++for test_str, expected in test_cases:
++    m = re.match(_strg_current, test_str)
++    if m:
++        captured = m.group('strg')
++        value = re.sub("''", "'", captured)
++        status = "✓" if value == expected else "✗"
++        print(f"{status} {repr(test_str):30} -> captured={repr(captured):25} -> value={repr(value):20} (expected {repr(expected)})")
++    else:
++        print(f"✗ {repr(test_str):30} -> NO MATCH")
++
++print("\nFixed regex:")
++print("=" * 70)
++for test_str, expected in test_cases:
++    m = re.match(_strg_fixed, test_str)
++    if m:
++        captured = m.group('strg')
++        value = re.sub("''", "'", captured)
++        status = "✓" if value == expected else "✗"
++        print(f"{status} {repr(test_str):30} -> captured={repr(captured):25} -> value={repr(value):20} (expected {repr(expected)})")
++    else:
++        print(f"✗ {repr(test_str):30} -> NO MATCH")
+diff --git a/test_simple_regex.py b/test_simple_regex.py
+new file mode 100644
+index 0000000..20a7c41
+--- /dev/null
++++ b/test_simple_regex.py
+@@ -0,0 +1,35 @@
++"""Simple test to verify the regex fix for escaped quotes."""
++import re
++
++# The fixed regex from card.py
++_strg_fixed = r"\'(?P<strg>(?:[^']|'')* *?)\'(?=$|/| )"
++
++# Test cases
++test_cases = [
++    # (card_image, expected_value)
++    ("KEYWORD  = 'hello' / comment", "hello"),
++    ("KEYWORD  = 'hello''world' / comment", "hello'world"),
++    ("KEYWORD  = 'hello''' / comment", "hello'"),
++    ("KEYWORD  = '''' / comment", "'"),
++    ("KEYWORD  = 'test'''' / comment", "test'"),
++]
++
++print("Testing fixed regex:")
++all_pass = True
++for card_image, expected in test_cases:
++    match = re.search(_strg_fixed, card_image)
++    if match:
++        captured = match.group('strg')
++        processed = captured.replace("''", "'")
++        status = "✓" if processed == expected else "✗"
++        if processed != expected:
++            all_pass = False
++        print(f"{status} Card: {card_image}")
++        print(f"   Captured: '{captured}'")
++        print(f"   Processed: '{processed}'")
++        print(f"   Expected: '{expected}'")
++    else:
++        print(f"✗ No match for: {card_image}")
++        all_pass = False
++
++print(f"\nAll tests passed: {all_pass}")

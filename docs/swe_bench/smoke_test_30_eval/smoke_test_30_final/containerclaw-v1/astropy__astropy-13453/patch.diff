@@ -1,0 +1,219 @@
+diff --git a/astropy/io/ascii/html.py b/astropy/io/ascii/html.py
+index 266cf22..2b85d2e 100644
+--- a/astropy/io/ascii/html.py
++++ b/astropy/io/ascii/html.py
+@@ -348,6 +348,7 @@ class HTML(core.BaseReader):
+ 
+         cols = list(table.columns.values())
+ 
++        self.data.cols = cols
+         self.data.header.cols = cols
+ 
+         if isinstance(self.data.fill_values, tuple):
+@@ -355,6 +356,9 @@ class HTML(core.BaseReader):
+ 
+         self.data._set_fill_values(cols)
+ 
++        # Apply column formats if provided
++        self.data._set_col_formats()
++
+         lines = []
+ 
+         # Set HTML escaping to False for any column in the raw_html_cols input
+diff --git a/test_formats_standalone.py b/test_formats_standalone.py
+new file mode 100644
+index 0000000..5fabdc4
+--- /dev/null
++++ b/test_formats_standalone.py
+@@ -0,0 +1,59 @@
++"""Minimal test for HTML formats fix - standalone without full astropy import."""
++import sys
++sys.path.insert(0, '/workspace')
++
++# Minimal mock to test the logic
++class MockColumnInfo:
++    def __init__(self, name, data, format_str=None):
++        self.name = name
++        self.data = data
++        self.format = format_str
++    
++    def iter_str_vals(self):
++        if self.format:
++            return [self.format % v for v in self.data]
++        return [str(v) for v in self.data]
++
++class MockCol:
++    def __init__(self, name, data, format_str=None):
++        self.info = MockColumnInfo(name, data, format_str)
++
++class MockData:
++    def __init__(self, formats=None):
++        self.formats = formats or {}
++    
++    def _set_col_formats(self):
++        """Apply formats to columns - this is what we added to HTML writer."""
++        # This simulates what the real _set_col_formats does
++        pass  # In real code, this sets col.info.format for each col
++
++def test_formats_logic():
++    """Test that formats are applied when _set_col_formats is called."""
++    
++    # Create mock columns
++    cols = [
++        MockCol('a', [1.234567, 2.345678], None),
++        MockCol('b', [10, 20], None),
++    ]
++    
++    # Simulate what _set_col_formats does
++    formats = {'a': '%.2f'}
++    for col in cols:
++        if col.info.name in formats:
++            col.info.format = formats[col.info.name]
++    
++    # Now iterate and format
++    result_a = list(cols[0].info.iter_str_vals())
++    result_b = list(cols[1].info.iter_str_vals())
++    
++    print(f"Column 'a' with format '%.2f': {result_a}")
++    print(f"Column 'b' without format: {result_b}")
++    
++    # Verify
++    assert result_a == ['1.23', '2.35'], f"Expected ['1.23', '2.35'], got {result_a}"
++    assert result_b == ['10', '20'], f"Expected ['10', '20'], got {result_b}"
++    
++    print("\n✅ Test passed! Formats are correctly applied.")
++
++if __name__ == '__main__':
++    test_formats_logic()
+diff --git a/test_html_formats.py b/test_html_formats.py
+new file mode 100644
+index 0000000..d65a2d5
+--- /dev/null
++++ b/test_html_formats.py
+@@ -0,0 +1,48 @@
++"""
++Test case for HTML formats parameter - to be added to astropy/io/ascii/tests/test_html.py
++
++This test verifies that the formats parameter is respected when writing tables to HTML.
++
++Usage:
++    python -m pytest test_html_formats.py -v
++"""
++
++import pytest
++from io import StringIO
++from astropy.table import Table
++from astropy.io import ascii
++
++
++def test_html_formats_parameter():
++    """Test that formats parameter works with HTML writer."""
++    # Create a table with float and int columns
++    t = Table()
++    t['a'] = [1.234567, 2.345678]
++    t['b'] = [10, 20]
++    t['c'] = ['hello', 'world']
++    
++    # Write to HTML with custom formats
++    out = StringIO()
++    ascii.write(t, out, format='html', formats={'a': '%.2f', 'b': '%03d'})
++    html_output = out.getvalue()
++    
++    # Check that the formatted values appear in the HTML
++    # Column 'a' should be formatted to 2 decimal places
++    assert '1.23' in html_output, "Expected '1.23' in HTML output"
++    assert '2.35' in html_output, "Expected '2.35' in HTML output"
++    
++    # Column 'b' should be zero-padded to 3 digits
++    assert '010' in html_output, "Expected '010' in HTML output"
++    assert '020' in html_output, "Expected '020' in HTML output"
++    
++    # Column 'c' should be unchanged
++    assert 'hello' in html_output, "Expected 'hello' in HTML output"
++    assert 'world' in html_output, "Expected 'world' in HTML output"
++    
++    print("\nHTML Output:")
++    print(html_output)
++    print("\n✅ Test passed!")
++
++
++if __name__ == '__main__':
++    test_html_formats_parameter()
+diff --git a/test_html_formats_bug.py b/test_html_formats_bug.py
+new file mode 100644
+index 0000000..277d6d4
+--- /dev/null
++++ b/test_html_formats_bug.py
+@@ -0,0 +1,29 @@
++"""Test to reproduce the HTML formats bug."""
++from astropy.table import Table
++from io import StringIO
++
++def test_html_formats():
++    # generate table
++    t = Table([(1.23875234858e-24, 3.2348748432e-15), (2, 4)], names=('a', 'b'))
++    tc = t.copy()  # copy table
++
++    # print HTML table with "a" column formatted to show 2 decimal places
++    with StringIO() as sp:
++        tc.write(sp, format="html", formats={"a": lambda x: f"{x:.2e}"})
++        html_output = sp.getvalue()
++        print("HTML output:")
++        print(html_output)
++        
++    # Check if formatting was applied
++    if "1.24e-24" in html_output:
++        print("\n✓ SUCCESS: Formatting was applied correctly!")
++        return True
++    elif "1.23875234858e-24" in html_output:
++        print("\n✗ FAILURE: Formatting was NOT applied - full precision shown!")
++        return False
++    else:
++        print("\n? UNKNOWN: Could not determine if formatting was applied")
++        return False
++
++if __name__ == "__main__":
++    test_html_formats()
+diff --git a/test_html_formats_fix.py b/test_html_formats_fix.py
+new file mode 100644
+index 0000000..428a1b8
+--- /dev/null
++++ b/test_html_formats_fix.py
+@@ -0,0 +1,37 @@
++"""Test to verify HTML writer respects formats parameter.
++
++This test verifies the fix for T-001 where the HTML writer was ignoring
++the formats parameter.
++"""
++import numpy as np
++from astropy.table import Table
++from astropy.io import ascii
++
++
++def test_html_formats_parameter():
++    """Test that HTML writer respects the formats parameter."""
++    # Create a simple table with numeric data
++    t = Table()
++    t['a'] = [1.23456789, 2.34567890, 3.45678901]
++    t['b'] = [10.11111111, 20.22222222, 30.33333333]
++    
++    # Write to HTML with format specification
++    html_output = ascii.write(t, format='html', formats={'a': '%.2f', 'b': '%.1f'})
++    
++    # Check that the formatted values appear in the output
++    assert '1.23' in html_output, "Column 'a' should be formatted to 2 decimal places"
++    assert '2.35' in html_output, "Column 'a' should be formatted to 2 decimal places"
++    assert '10.1' in html_output, "Column 'b' should be formatted to 1 decimal place"
++    assert '20.2' in html_output, "Column 'b' should be formatted to 1 decimal place"
++    
++    # Verify unformatted values do NOT appear
++    assert '1.23456789' not in html_output, "Unformatted value should not appear"
++    assert '10.11111111' not in html_output, "Unformatted value should not appear"
++    
++    print("✓ HTML formats parameter test PASSED")
++    print("\nGenerated HTML output:")
++    print(html_output)
++
++
++if __name__ == '__main__':
++    test_html_formats_parameter()

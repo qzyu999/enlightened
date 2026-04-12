@@ -1,0 +1,138 @@
+diff --git a/astropy/utils/misc.py b/astropy/utils/misc.py
+index de3fb01..cceaeb9 100644
+--- a/astropy/utils/misc.py
++++ b/astropy/utils/misc.py
+@@ -528,7 +528,7 @@ class InheritDocstrings(type):
+                 not key.startswith('_'))
+ 
+         for key, val in dct.items():
+-            if (inspect.isfunction(val) and
++            if ((inspect.isfunction(val) or isinstance(val, property)) and
+                 is_public_member(key) and
+                 val.__doc__ is None):
+                 for base in cls.__mro__[1:]:
+diff --git a/astropy/utils/tests/test_misc.py b/astropy/utils/tests/test_misc.py
+index 4f632e8..daa7ccb 100644
+--- a/astropy/utils/tests/test_misc.py
++++ b/astropy/utils/tests/test_misc.py
+@@ -89,6 +89,23 @@ def test_inherit_docstrings():
+         assert Subclass.__call__.__doc__ == "FOO"
+ 
+ 
++def test_inherit_docstrings_property():
++    """Test that InheritDocstrings works for properties, not just methods."""
++    class Base(metaclass=misc.InheritDocstrings):
++        @property
++        def my_property(self):
++            """This is the base property docstring."""
++            return 42
++
++    class Subclass(Base):
++        @property
++        def my_property(self):
++            # No docstring - should inherit from base
++            return 100
++
++    assert Subclass.my_property.__doc__ == "This is the base property docstring."
++
++
+ def test_set_locale():
+     # First, test if the required locales are available
+     current = locale.setlocale(locale.LC_ALL)
+diff --git a/test_property_docstring_bug.py b/test_property_docstring_bug.py
+new file mode 100644
+index 0000000..dff9906
+--- /dev/null
++++ b/test_property_docstring_bug.py
+@@ -0,0 +1,29 @@
++"""Test to reproduce the InheritDocstrings property issue."""
++
++from astropy.utils.misc import InheritDocstrings
++
++
++class Base(metaclass=InheritDocstrings):
++    @property
++    def my_property(self):
++        """This is the base property docstring."""
++        return 42
++
++
++class Derived(Base):
++    @property
++    def my_property(self):
++        # No docstring - should inherit from base
++        return 100
++
++
++if __name__ == "__main__":
++    print("Base property docstring:", repr(Base.my_property.__doc__))
++    print("Derived property docstring:", repr(Derived.my_property.__doc__))
++    
++    if Derived.my_property.__doc__ == "This is the base property docstring":
++        print("\n✓ PASS: Property docstring was inherited correctly")
++    else:
++        print("\n✗ FAIL: Property docstring was NOT inherited")
++        print(f"  Expected: 'This is the base property docstring'")
++        print(f"  Got: {repr(Derived.my_property.__doc__)}")
+diff --git a/test_property_docstring_standalone.py b/test_property_docstring_standalone.py
+new file mode 100644
+index 0000000..19a38f2
+--- /dev/null
++++ b/test_property_docstring_standalone.py
+@@ -0,0 +1,56 @@
++"""Standalone test to reproduce the InheritDocstrings property issue."""
++
++import inspect
++
++
++class InheritDocstrings(type):
++    """
++    This metaclass makes methods of a class automatically have their
++    docstrings filled in from the methods they override in the base
++    class.
++    """
++
++    def __init__(cls, name, bases, dct):
++        def is_public_member(key):
++            return (
++                (key.startswith('__') and key.endswith('__')
++                 and len(key) > 4) or
++                not key.startswith('_'))
++
++        for key, val in dct.items():
++            if ((inspect.isfunction(val) or isinstance(val, property)) and
++                is_public_member(key) and
++                val.__doc__ is None):
++                for base in cls.__mro__[1:]:
++                    super_method = getattr(base, key, None)
++                    if super_method is not None:
++                        val.__doc__ = super_method.__doc__
++                        break
++
++        super().__init__(name, bases, dct)
++
++
++class Base(metaclass=InheritDocstrings):
++    @property
++    def my_property(self):
++        """This is the base property docstring."""
++        return 42
++
++
++class Derived(Base):
++    @property
++    def my_property(self):
++        # No docstring - should inherit from base
++        return 100
++
++
++if __name__ == "__main__":
++    print("Base property docstring:", repr(Base.my_property.__doc__))
++    print("Derived property docstring:", repr(Derived.my_property.__doc__))
++    
++    if Derived.my_property.__doc__ is not None and "base property docstring" in Derived.my_property.__doc__:
++        print("\n✓ PASS: Property docstring was inherited correctly")
++    else:
++        print("\n✗ FAIL: Property docstring was NOT inherited")
++        print(f"  Expected: 'This is the base property docstring.'")
++        print(f"  Got: {repr(Derived.my_property.__doc__)}")

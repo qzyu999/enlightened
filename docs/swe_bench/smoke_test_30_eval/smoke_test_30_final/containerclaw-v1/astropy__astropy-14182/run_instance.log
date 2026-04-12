@@ -1,0 +1,78 @@
+2026-04-12 04:48:08,941 - INFO - >>>>> Applied Patch:
+Checking patch astropy/io/ascii/rst.py...
+Checking patch astropy/io/ascii/tests/test_rst.py...
+Applied patch astropy/io/ascii/rst.py cleanly.
+Applied patch astropy/io/ascii/tests/test_rst.py cleanly.
+
+2026-04-12 04:48:11,248 - INFO - Git diff before:
+diff --git a/astropy/io/ascii/rst.py b/astropy/io/ascii/rst.py
+index abdeba8ef..78e42b7d6 100644
+--- a/astropy/io/ascii/rst.py
++++ b/astropy/io/ascii/rst.py
+@@ -57,8 +57,8 @@ class RST(FixedWidth):
+     data_class = SimpleRSTData
+     header_class = SimpleRSTHeader
+ 
+-    def __init__(self):
+-        super().__init__(delimiter_pad=None, bookend=False)
++    def __init__(self, header_rows=None):
++        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)
+ 
+     def write(self, lines):
+         lines = super().write(lines)
+diff --git a/astropy/io/ascii/tests/test_rst.py b/astropy/io/ascii/tests/test_rst.py
+index 84d6fed40..6dbb4a577 100644
+--- a/astropy/io/ascii/tests/test_rst.py
++++ b/astropy/io/ascii/tests/test_rst.py
+@@ -185,3 +185,27 @@ Col1      Col2 Col3 Col4
+ ==== ========= ==== ====
+ """,
+     )
++
++
++def test_write_header_rows():
++    """Write a table with header_rows parameter"""
++    from astropy.table import QTable
++    import astropy.units as u
++
++    tbl = QTable(
++        {'wave': [350, 950] * u.nm, 'response': [0.7, 1.2] * u.count}
++    )
++    out = StringIO()
++    ascii.write(tbl, out, format="ascii.rst", header_rows=["name", "unit"])
++    result = out.getvalue()
++    lines = result.splitlines()
++    # Check that we have header rows for both name and unit
++    assert "wave" in lines[1]
++    assert "response" in lines[1]
++    assert "nm" in lines[2]
++    assert "ct" in lines[2]  # count abbreviated to ct
++    # Check data rows
++    assert "350.0" in lines[3]
++    assert "0.7" in lines[3]
++    assert "950.0" in lines[4]
++    assert "1.2" in lines[4]
+
+2026-04-12 04:49:20,612 - INFO - Test runtime: 69.02 seconds
+2026-04-12 04:49:20,613 - INFO - Test output for astropy__astropy-14182 written to logs/run_evaluation/smoke_test_30_final/containerclaw-v1/astropy__astropy-14182/test_output.txt
+2026-04-12 04:49:20,993 - INFO - Git diff after:
+diff --git a/astropy/io/ascii/rst.py b/astropy/io/ascii/rst.py
+index abdeba8ef..78e42b7d6 100644
+--- a/astropy/io/ascii/rst.py
++++ b/astropy/io/ascii/rst.py
+@@ -57,8 +57,8 @@ class RST(FixedWidth):
+     data_class = SimpleRSTData
+     header_class = SimpleRSTHeader
+ 
+-    def __init__(self):
+-        super().__init__(delimiter_pad=None, bookend=False)
++    def __init__(self, header_rows=None):
++        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)
+ 
+     def write(self, lines):
+         lines = super().write(lines)
+
+2026-04-12 04:49:20,994 - INFO - Git diff changed after running eval script
+2026-04-12 04:49:20,994 - INFO - Grading answer for astropy__astropy-14182...
+2026-04-12 04:49:21,034 - INFO - report: {'astropy__astropy-14182': {'patch_is_None': False, 'patch_exists': True, 'patch_successfully_applied': True, 'resolved': False, 'tests_status': {'FAIL_TO_PASS': {'success': [], 'failure': ['astropy/io/ascii/tests/test_rst.py::test_rst_with_header_rows']}, 'PASS_TO_PASS': {'success': ['astropy/io/ascii/tests/test_rst.py::test_read_normal', 'astropy/io/ascii/tests/test_rst.py::test_read_normal_names', 'astropy/io/ascii/tests/test_rst.py::test_read_normal_names_include', 'astropy/io/ascii/tests/test_rst.py::test_read_normal_exclude', 'astropy/io/ascii/tests/test_rst.py::test_read_unbounded_right_column', 'astropy/io/ascii/tests/test_rst.py::test_read_unbounded_right_column_header', 'astropy/io/ascii/tests/test_rst.py::test_read_right_indented_table', 'astropy/io/ascii/tests/test_rst.py::test_trailing_spaces_in_row_definition', 'astropy/io/ascii/tests/test_rst.py::test_write_normal'], 'failure': []}, 'FAIL_TO_FAIL': {'success': [], 'failure': []}, 'PASS_TO_FAIL': {'success': [], 'failure': []}}}}
+Result for astropy__astropy-14182: resolved: False

@@ -1,0 +1,371 @@
+diff --git a/astropy/nddata/mixins/ndarithmetic.py b/astropy/nddata/mixins/ndarithmetic.py
+index 4153dfc..8cc9afc 100644
+--- a/astropy/nddata/mixins/ndarithmetic.py
++++ b/astropy/nddata/mixins/ndarithmetic.py
+@@ -512,19 +512,28 @@ class NDArithmeticMixin:
+             If neither had a mask ``None`` is returned. Otherwise
+             ``handle_mask`` must create (and copy) the returned mask.
+         """
+-        # If only one mask is present we need not bother about any type checks
+-        if (
+-            self.mask is None and operand is not None and operand.mask is None
+-        ) or handle_mask is None:
++        # If handle_mask is None, return None
++        if handle_mask is None:
+             return None
+-        elif self.mask is None and operand is not None:
+-            # Make a copy so there is no reference in the result.
+-            return deepcopy(operand.mask)
+-        elif operand is None:
++
++        # If operand is None (e.g., scalar operation), just return self's mask
++        if operand is None:
+             return deepcopy(self.mask)
+-        else:
+-            # Now lets calculate the resulting mask (operation enforces copy)
+-            return handle_mask(self.mask, operand.mask, **kwds)
++
++        # If both masks are None, return None
++        if self.mask is None and operand.mask is None:
++            return None
++
++        # If only self has a mask, copy it
++        if self.mask is not None and operand.mask is None:
++            return deepcopy(self.mask)
++
++        # If only operand has a mask, copy it
++        if self.mask is None and operand.mask is not None:
++            return deepcopy(operand.mask)
++
++        # Both have masks, apply handle_mask
++        return handle_mask(self.mask, operand.mask, **kwds)
+ 
+     def _arithmetic_wcs(self, operation, operand, compare_wcs, **kwds):
+         """
+diff --git a/test_mask_bug.py b/test_mask_bug.py
+new file mode 100644
+index 0000000..abe1c21
+--- /dev/null
++++ b/test_mask_bug.py
+@@ -0,0 +1,53 @@
++"""Test script to reproduce the NDDataRef mask propagation bug."""
++import numpy as np
++from astropy.nddata import NDDataRef
++
++def test_mask_propagation():
++    array = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
++    mask = np.array([[0, 1, 64], [8, 0, 1], [2, 1, 0]])
++
++    nref_nomask = NDDataRef(array)
++    nref_mask = NDDataRef(array, mask=mask)
++
++    print("Test 1: multiply no mask by constant (no mask * no mask)")
++    result = nref_nomask.multiply(1., handle_mask=np.bitwise_or)
++    print(f"  Result mask: {result.mask}")  # should be None
++    assert result.mask is None, "Expected no mask"
++    print("  PASSED")
++
++    print("\nTest 2: multiply no mask by itself (no mask * no mask)")
++    result = nref_nomask.multiply(nref_nomask, handle_mask=np.bitwise_or)
++    print(f"  Result mask: {result.mask}")  # should be None
++    assert result.mask is None, "Expected no mask"
++    print("  PASSED")
++
++    print("\nTest 3: multiply mask by constant (mask * no mask)")
++    try:
++        result = nref_mask.multiply(1., handle_mask=np.bitwise_or)
++        print(f"  Result mask: {result.mask}")
++        np.testing.assert_array_equal(result.mask, mask)
++        print("  PASSED")
++    except TypeError as e:
++        print(f"  FAILED with TypeError: {e}")
++        raise
++
++    print("\nTest 4: multiply mask by itself (mask * mask)")
++    result = nref_mask.multiply(nref_mask, handle_mask=np.bitwise_or)
++    print(f"  Result mask: {result.mask}")
++    np.testing.assert_array_equal(result.mask, mask)
++    print("  PASSED")
++
++    print("\nTest 5: multiply mask by no mask (mask * no mask)")
++    try:
++        result = nref_mask.multiply(nref_nomask, handle_mask=np.bitwise_or)
++        print(f"  Result mask: {result.mask}")
++        np.testing.assert_array_equal(result.mask, mask)
++        print("  PASSED")
++    except TypeError as e:
++        print(f"  FAILED with TypeError: {e}")
++        raise
++
++    print("\nAll tests passed!")
++
++if __name__ == "__main__":
++    test_mask_propagation()
+diff --git a/test_mask_fix.py b/test_mask_fix.py
+new file mode 100644
+index 0000000..e004245
+--- /dev/null
++++ b/test_mask_fix.py
+@@ -0,0 +1,187 @@
++"""
++Minimal test to verify the _arithmetic_mask fix.
++
++This test mimics the logic of the fixed _arithmetic_mask method to verify
++that the bug fix handles all cases correctly.
++"""
++
++from copy import deepcopy
++import numpy as np
++
++def _arithmetic_mask_fixed(self_mask, operand, operand_mask, handle_mask):
++    """
++    Fixed version of _arithmetic_mask method.
++    
++    The bug was: when self_mask is not None, operand is not None, but operand_mask is None,
++    the code would fall through to calling handle_mask(self_mask, None) which fails.
++    
++    The fix adds a check: if only self has a mask (and operand doesn't), just copy self's mask.
++    """
++    # If handle_mask is None, return None
++    if handle_mask is None:
++        return None
++    
++    # If operand is None (e.g., scalar operation), just return self's mask
++    if operand is None:
++        return deepcopy(self_mask)
++    
++    # If both masks are None, return None
++    if self_mask is None and operand_mask is None:
++        return None
++    
++    # If only self has a mask, copy it
++    if self_mask is not None and operand_mask is None:
++        return deepcopy(self_mask)
++    
++    # If only operand has a mask, copy it
++    if self_mask is None and operand_mask is not None:
++        return deepcopy(operand_mask)
++    
++    # Both have masks, apply handle_mask
++    return handle_mask(self_mask, operand_mask)
++
++def _arithmetic_mask_buggy(self_mask, operand, operand_mask, handle_mask):
++    """
++    Buggy version of _arithmetic_mask method (before the fix).
++    
++    This version is missing the check for when self has a mask but operand doesn't.
++    """
++    # If handle_mask is None, return None
++    if handle_mask is None:
++        return None
++    
++    # If operand is None (e.g., scalar operation), just return self's mask
++    if operand is None:
++        return deepcopy(self_mask)
++    
++    # If both masks are None, return None
++    if self_mask is None and operand_mask is None:
++        return None
++    
++    # BUG: Missing check for when self has a mask but operand doesn't!
++    # This causes the code to fall through to handle_mask(self_mask, None) which fails
++    
++    # If only operand has a mask, copy it
++    if self_mask is None and operand_mask is not None:
++        return deepcopy(operand_mask)
++    
++    # Both have masks, apply handle_mask
++    return handle_mask(self_mask, operand_mask)
++
++def default_handle_mask(mask1, mask2):
++    """Default handle_mask function that ORs two masks together."""
++    return np.logical_or(mask1, mask2)
++
++def test_case(name, self_mask, operand, operand_mask, expected_mask, handle_mask=default_handle_mask):
++    """Test a single case."""
++    print(f"\n{name}")
++    print(f"  self_mask={self_mask}, operand={operand}, operand_mask={operand_mask}")
++    
++    # Test fixed version
++    try:
++        result_fixed = _arithmetic_mask_fixed(self_mask, operand, operand_mask, handle_mask)
++        if expected_mask is None:
++            passed = result_fixed is None
++        else:
++            passed = np.array_equal(result_fixed, expected_mask)
++        if passed:
++            print(f"  ✓ Fixed version: PASSED (result={result_fixed})")
++        else:
++            print(f"  ✗ Fixed version: FAILED (expected={expected_mask}, got={result_fixed})")
++            return False
++    except Exception as e:
++        print(f"  ✗ Fixed version: FAILED with error: {e}")
++        return False
++    
++    # Test buggy version (should fail for the specific bug case)
++    try:
++        result_buggy = _arithmetic_mask_buggy(self_mask, operand, operand_mask, handle_mask)
++        if expected_mask is None:
++            passed = result_buggy is None
++        else:
++            passed = np.array_equal(result_buggy, expected_mask)
++        if passed:
++            print(f"  ✓ Buggy version: PASSED (result={result_buggy})")
++        else:
++            print(f"  ✗ Buggy version: FAILED (expected={expected_mask}, got={result_buggy})")
++    except Exception as e:
++        print(f"  ✗ Buggy version: FAILED with error: {e}")
++    
++    return True
++
++def main():
++    print("=" * 70)
++    print("Testing _arithmetic_mask fix")
++    print("=" * 70)
++    
++    all_passed = True
++    
++    # Test case 1: handle_mask is None
++    all_passed &= test_case(
++        "Test 1: handle_mask is None",
++        self_mask=np.array([True, False, True]),
++        operand="some_operand",
++        operand_mask=np.array([False, True, False]),
++        expected_mask=None,
++        handle_mask=None
++    )
++    
++    # Test case 2: operand is None (scalar operation)
++    all_passed &= test_case(
++        "Test 2: operand is None (scalar operation)",
++        self_mask=np.array([True, False, True]),
++        operand=None,
++        operand_mask=None,
++        expected_mask=np.array([True, False, True])
++    )
++    
++    # Test case 3: both masks are None
++    all_passed &= test_case(
++        "Test 3: both masks are None",
++        self_mask=None,
++        operand="some_operand",
++        operand_mask=None,
++        expected_mask=None
++    )
++    
++    # Test case 4: only self has a mask (THIS IS THE BUG CASE!)
++    all_passed &= test_case(
++        "Test 4: only self has a mask (THE BUG CASE)",
++        self_mask=np.array([True, False, True]),
++        operand="some_operand",
++        operand_mask=None,
++        expected_mask=np.array([True, False, True])
++    )
++    
++    # Test case 5: only operand has a mask
++    all_passed &= test_case(
++        "Test 5: only operand has a mask",
++        self_mask=None,
++        operand="some_operand",
++        operand_mask=np.array([False, True, False]),
++        expected_mask=np.array([False, True, False])
++    )
++    
++    # Test case 6: both have masks
++    all_passed &= test_case(
++        "Test 6: both have masks",
++        self_mask=np.array([True, False, True]),
++        operand="some_operand",
++        operand_mask=np.array([False, True, False]),
++        expected_mask=np.array([True, True, True])  # OR of both masks
++    )
++    
++    print("\n" + "=" * 70)
++    if all_passed:
++        print("✓ ALL TESTS PASSED!")
++        print("\nThe fix correctly handles the case where self has a mask but operand doesn't.")
++        print("Without the fix, this case would cause handle_mask(self_mask, None) to be called,")
++        print("which would fail with a TypeError.")
++    else:
++        print("✗ SOME TESTS FAILED!")
++    print("=" * 70)
++    
++    return 0 if all_passed else 1
++
++if __name__ == "__main__":
++    exit(main())
+diff --git a/test_mask_simple.py b/test_mask_simple.py
+new file mode 100644
+index 0000000..60f38b8
+--- /dev/null
++++ b/test_mask_simple.py
+@@ -0,0 +1,69 @@
++"""Simple test to understand the mask propagation bug."""
++import numpy as np
++from copy import deepcopy
++
++def _arithmetic_mask_buggy(self_mask, operand_mask, handle_mask, operand_is_none=False):
++    """Current buggy implementation."""
++    # If only one mask is present we need not bother about any type checks
++    if (
++        self_mask is None and operand_is_none and operand_mask is None
++    ) or handle_mask is None:
++        return None
++    elif self_mask is None and operand_is_none:
++        # Make a copy so there is no reference in the result.
++        return deepcopy(operand_mask)
++    elif operand_is_none:
++        return deepcopy(self_mask)
++    else:
++        # Now lets calculate the resulting mask (operation enforces copy)
++        return handle_mask(self_mask, operand_mask)
++
++def _arithmetic_mask_fixed(self_mask, operand_mask, handle_mask, operand_is_none=False):
++    """Fixed implementation."""
++    # If handle_mask is None, return None
++    if handle_mask is None:
++        return None
++    
++    # If operand is None (scalar operation), just copy self's mask
++    if operand_is_none:
++        if self_mask is None:
++            return None
++        return deepcopy(self_mask)
++    
++    # If both masks are None, return None
++    if self_mask is None and operand_mask is None:
++        return None
++    
++    # If only self has a mask, copy it
++    if self_mask is not None and operand_mask is None:
++        return deepcopy(self_mask)
++    
++    # If only operand has a mask, copy it
++    if self_mask is None and operand_mask is not None:
++        return deepcopy(operand_mask)
++    
++    # Both have masks, apply handle_mask
++    return handle_mask(self_mask, operand_mask)
++
++# Test cases
++mask = np.array([[0, 1, 64], [8, 0, 1], [2, 1, 0]])
++
++print("Test 1: self.mask=None, operand=None (scalar), handle_mask=np.bitwise_or")
++print("  Buggy:", _arithmetic_mask_buggy(None, None, np.bitwise_or, operand_is_none=True))
++print("  Fixed:", _arithmetic_mask_fixed(None, None, np.bitwise_or, operand_is_none=True))
++
++print("\nTest 2: self.mask=mask, operand=None (scalar), handle_mask=np.bitwise_or")
++print("  Buggy:", _arithmetic_mask_buggy(mask, None, np.bitwise_or, operand_is_none=True))
++print("  Fixed:", _arithmetic_mask_fixed(mask, None, np.bitwise_or, operand_is_none=True))
++
++print("\nTest 3: self.mask=mask, operand.mask=None, handle_mask=np.bitwise_or")
++try:
++    result = _arithmetic_mask_buggy(mask, None, np.bitwise_or, operand_is_none=False)
++    print(f"  Buggy: {result}")
++except TypeError as e:
++    print(f"  Buggy: TypeError - {e}")
++print("  Fixed:", _arithmetic_mask_fixed(mask, None, np.bitwise_or, operand_is_none=False))
++
++print("\nTest 4: self.mask=mask, operand.mask=mask, handle_mask=np.bitwise_or")
++print("  Buggy:", _arithmetic_mask_buggy(mask, mask, np.bitwise_or, operand_is_none=False))
++print("  Fixed:", _arithmetic_mask_fixed(mask, mask, np.bitwise_or, operand_is_none=False))

@@ -1,0 +1,94 @@
+2026-04-12 04:43:24,088 - INFO - >>>>> Applied Patch:
+/tmp/patch.diff:26: trailing whitespace.
+    
+/tmp/patch.diff:33: trailing whitespace.
+    
+/tmp/patch.diff:39: trailing whitespace.
+    
+/tmp/patch.diff:51: trailing whitespace.
+    
+Checking patch astropy/modeling/separable.py...
+Checking patch astropy/modeling/tests/test_separable.py...
+Checking patch test_separability_bug.py...
+Applied patch astropy/modeling/separable.py cleanly.
+Applied patch astropy/modeling/tests/test_separable.py cleanly.
+Applied patch test_separability_bug.py cleanly.
+warning: 4 lines add whitespace errors.
+
+2026-04-12 04:43:26,778 - INFO - Git diff before:
+diff --git a/astropy/modeling/separable.py b/astropy/modeling/separable.py
+index a308e2729..45bea3608 100644
+--- a/astropy/modeling/separable.py
++++ b/astropy/modeling/separable.py
+@@ -242,7 +242,7 @@ def _cstack(left, right):
+         cright = _coord_matrix(right, 'right', noutp)
+     else:
+         cright = np.zeros((noutp, right.shape[1]))
+-        cright[-right.shape[0]:, -right.shape[1]:] = 1
++        cright[-right.shape[0]:, -right.shape[1]:] = right
+ 
+     return np.hstack([cleft, cright])
+ 
+diff --git a/astropy/modeling/tests/test_separable.py b/astropy/modeling/tests/test_separable.py
+index 8dfe5c862..7daf5f794 100644
+--- a/astropy/modeling/tests/test_separable.py
++++ b/astropy/modeling/tests/test_separable.py
+@@ -148,3 +148,36 @@ def test_custom_model_separable():
+ 
+     assert not model_c().separable
+     assert np.all(separability_matrix(model_c()) == [True, True])
++
++
++def test_nested_compound_model_separability():
++    """Test separability_matrix with nested compound models using & operator.
++    
++    This tests the fix for the bug where nested compound models would lose
++    their separability information when combined with the & operator.
++    """
++    # Create a nested compound model: Linear1D(10) & Linear1D(5)
++    # This should be separable (each output depends only on its own input)
++    nested = models.Linear1D(10) & models.Linear1D(5)
++    
++    # The separability matrix should be identity-like (block diagonal)
++    # showing that each output is independent
++    matrix = separability_matrix(nested)
++    expected = np.array([[True, False], [False, True]])
++    assert np.all(matrix == expected), f"Expected {expected}, got {matrix}"
++    
++    # Test combining with another model using &
++    # Shift(1) & (Linear1D(10) & Linear1D(5))
++    combined = models.Shift(1) & nested
++    matrix = separability_matrix(combined)
++    # Should be a 3x3 block diagonal matrix
++    expected = np.array([
++        [True, False, False],
++        [False, True, False],
++        [False, False, True]
++    ])
++    assert np.all(matrix == expected), f"Expected {expected}, got {matrix}"
++    
++    # Verify is_separable returns correct result
++    assert is_separable(nested) == [True, True]
++    assert is_separable(combined) == [True, True, True]
+
+2026-04-12 04:44:54,640 - INFO - Test runtime: 87.71 seconds
+2026-04-12 04:44:54,646 - INFO - Test output for astropy__astropy-12907 written to logs/run_evaluation/smoke_test_30_final/containerclaw-v1/astropy__astropy-12907/test_output.txt
+2026-04-12 04:44:55,016 - INFO - Git diff after:
+diff --git a/astropy/modeling/separable.py b/astropy/modeling/separable.py
+index a308e2729..45bea3608 100644
+--- a/astropy/modeling/separable.py
++++ b/astropy/modeling/separable.py
+@@ -242,7 +242,7 @@ def _cstack(left, right):
+         cright = _coord_matrix(right, 'right', noutp)
+     else:
+         cright = np.zeros((noutp, right.shape[1]))
+-        cright[-right.shape[0]:, -right.shape[1]:] = 1
++        cright[-right.shape[0]:, -right.shape[1]:] = right
+ 
+     return np.hstack([cleft, cright])
+ 
+
+2026-04-12 04:44:55,016 - INFO - Git diff changed after running eval script
+2026-04-12 04:44:55,016 - INFO - Grading answer for astropy__astropy-12907...
+2026-04-12 04:44:55,049 - INFO - report: {'astropy__astropy-12907': {'patch_is_None': False, 'patch_exists': True, 'patch_successfully_applied': True, 'resolved': True, 'tests_status': {'FAIL_TO_PASS': {'success': ['astropy/modeling/tests/test_separable.py::test_separable[compound_model6-result6]', 'astropy/modeling/tests/test_separable.py::test_separable[compound_model9-result9]'], 'failure': []}, 'PASS_TO_PASS': {'success': ['astropy/modeling/tests/test_separable.py::test_coord_matrix', 'astropy/modeling/tests/test_separable.py::test_cdot', 'astropy/modeling/tests/test_separable.py::test_cstack', 'astropy/modeling/tests/test_separable.py::test_arith_oper', 'astropy/modeling/tests/test_separable.py::test_separable[compound_model0-result0]', 'astropy/modeling/tests/test_separable.py::test_separable[compound_model1-result1]', 'astropy/modeling/tests/test_separable.py::test_separable[compound_model2-result2]', 'astropy/modeling/tests/test_separable.py::test_separable[compound_model3-result3]', 'astropy/modeling/tests/test_separable.py::test_separable[compound_model4-result4]', 'astropy/modeling/tests/test_separable.py::test_separable[compound_model5-result5]', 'astropy/modeling/tests/test_separable.py::test_separable[compound_model7-result7]', 'astropy/modeling/tests/test_separable.py::test_separable[compound_model8-result8]', 'astropy/modeling/tests/test_separable.py::test_custom_model_separable'], 'failure': []}, 'FAIL_TO_FAIL': {'success': [], 'failure': []}, 'PASS_TO_FAIL': {'success': [], 'failure': []}}}}
+Result for astropy__astropy-12907: resolved: True

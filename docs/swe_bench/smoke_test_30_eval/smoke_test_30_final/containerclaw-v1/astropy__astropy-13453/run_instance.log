@@ -1,0 +1,77 @@
+2026-04-12 04:49:01,791 - INFO - >>>>> Applied Patch:
+/tmp/patch.diff:39: trailing whitespace.
+    
+/tmp/patch.diff:52: trailing whitespace.
+    
+/tmp/patch.diff:60: trailing whitespace.
+    
+/tmp/patch.diff:66: trailing whitespace.
+    
+/tmp/patch.diff:72: trailing whitespace.
+    
+Checking patch astropy/io/ascii/html.py...
+Checking patch test_formats_standalone.py...
+Checking patch test_html_formats.py...
+Checking patch test_html_formats_bug.py...
+Checking patch test_html_formats_fix.py...
+Applied patch astropy/io/ascii/html.py cleanly.
+Applied patch test_formats_standalone.py cleanly.
+Applied patch test_html_formats.py cleanly.
+Applied patch test_html_formats_bug.py cleanly.
+Applied patch test_html_formats_fix.py cleanly.
+warning: squelched 13 whitespace errors
+warning: 18 lines add whitespace errors.
+
+2026-04-12 04:49:04,436 - INFO - Git diff before:
+diff --git a/astropy/io/ascii/html.py b/astropy/io/ascii/html.py
+index 266cf229c..2b85d2ed6 100644
+--- a/astropy/io/ascii/html.py
++++ b/astropy/io/ascii/html.py
+@@ -348,6 +348,7 @@ class HTML(core.BaseReader):
+ 
+         cols = list(table.columns.values())
+ 
++        self.data.cols = cols
+         self.data.header.cols = cols
+ 
+         if isinstance(self.data.fill_values, tuple):
+@@ -355,6 +356,9 @@ class HTML(core.BaseReader):
+ 
+         self.data._set_fill_values(cols)
+ 
++        # Apply column formats if provided
++        self.data._set_col_formats()
++
+         lines = []
+ 
+         # Set HTML escaping to False for any column in the raw_html_cols input
+
+2026-04-12 04:50:33,354 - INFO - Test runtime: 88.55 seconds
+2026-04-12 04:50:33,358 - INFO - Test output for astropy__astropy-13453 written to logs/run_evaluation/smoke_test_30_final/containerclaw-v1/astropy__astropy-13453/test_output.txt
+2026-04-12 04:50:33,750 - INFO - Git diff after:
+diff --git a/astropy/io/ascii/html.py b/astropy/io/ascii/html.py
+index 266cf229c..2b85d2ed6 100644
+--- a/astropy/io/ascii/html.py
++++ b/astropy/io/ascii/html.py
+@@ -348,6 +348,7 @@ class HTML(core.BaseReader):
+ 
+         cols = list(table.columns.values())
+ 
++        self.data.cols = cols
+         self.data.header.cols = cols
+ 
+         if isinstance(self.data.fill_values, tuple):
+@@ -355,6 +356,9 @@ class HTML(core.BaseReader):
+ 
+         self.data._set_fill_values(cols)
+ 
++        # Apply column formats if provided
++        self.data._set_col_formats()
++
+         lines = []
+ 
+         # Set HTML escaping to False for any column in the raw_html_cols input
+
+2026-04-12 04:50:33,750 - INFO - Grading answer for astropy__astropy-13453...
+2026-04-12 04:50:33,789 - INFO - report: {'astropy__astropy-13453': {'patch_is_None': False, 'patch_exists': True, 'patch_successfully_applied': True, 'resolved': True, 'tests_status': {'FAIL_TO_PASS': {'success': ['astropy/io/ascii/tests/test_html.py::test_write_table_formatted_columns'], 'failure': []}, 'PASS_TO_PASS': {'success': ['astropy/io/ascii/tests/test_html.py::test_listwriter', 'astropy/io/ascii/tests/test_html.py::test_htmlinputter_no_bs4', 'astropy/io/ascii/tests/test_html.py::test_multicolumn_write', 'astropy/io/ascii/tests/test_html.py::test_write_no_multicols', 'astropy/io/ascii/tests/test_html.py::test_write_table_html_fill_values', 'astropy/io/ascii/tests/test_html.py::test_write_table_html_fill_values_optional_columns', 'astropy/io/ascii/tests/test_html.py::test_write_table_html_fill_values_masked', 'astropy/io/ascii/tests/test_html.py::test_multicolumn_table_html_fill_values', 'astropy/io/ascii/tests/test_html.py::test_multi_column_write_table_html_fill_values_masked'], 'failure': []}, 'FAIL_TO_FAIL': {'success': [], 'failure': []}, 'PASS_TO_FAIL': {'success': [], 'failure': []}}}}
+Result for astropy__astropy-13453: resolved: True

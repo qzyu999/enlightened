@@ -1,0 +1,233 @@
+2026-04-12 04:48:23,164 - INFO - >>>>> Applied Patch:
+/tmp/patch.diff:12: trailing whitespace.
+    
+/tmp/patch.diff:14: trailing whitespace.
+    
+/tmp/patch.diff:33: trailing whitespace.
+        # 
+/tmp/patch.diff:37: trailing whitespace.
+        
+/tmp/patch.diff:58: trailing whitespace.
+        
+Checking patch astropy/utils/introspection.py...
+Applied patch astropy/utils/introspection.py cleanly.
+warning: squelched 4 whitespace errors
+warning: 9 lines add whitespace errors.
+
+2026-04-12 04:48:24,884 - INFO - Git diff before:
+diff --git a/astropy/utils/introspection.py b/astropy/utils/introspection.py
+index 3e784f9fc..f58473956 100644
+--- a/astropy/utils/introspection.py
++++ b/astropy/utils/introspection.py
+@@ -88,6 +88,84 @@ def resolve_name(name, *additional_parts):
+     return ret
+ 
+ 
++def _cmp_version(v1, v2):
++    """
++    Compare two version strings, handling the LooseVersion bug with dev versions.
++    
++    See https://bugs.python.org/issue30272 for details on the LooseVersion bug.
++    
++    Returns
++    -------
++    int
++        -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2
++    """
++    try:
++        lv1 = LooseVersion(v1)
++        lv2 = LooseVersion(v2)
++        if lv1 == lv2:
++            return 0
++        elif lv1 < lv2:
++            return -1
++        else:
++            return 1
++    except TypeError:
++        # LooseVersion has a bug comparing versions like '1.14.3' with '1.14dev'
++        # The bug occurs when one version has numeric components and the other
++        # has string components at the same position.
++        # 
++        # As a workaround, we parse the versions manually and compare component by component.
++        # We treat numeric components as greater than string components (e.g., '1.14.3' > '1.14dev')
++        # since release versions should be greater than development versions.
++        
++        def parse_version_component(comp):
++            """Parse a version component, returning (sort_key, value)."""
++            try:
++                return (1, int(comp), '')  # Numeric - sort after strings
++            except ValueError:
++                try:
++                    return (1, float(comp), '')  # Float - sort after strings
++                except ValueError:
++                    # String component - check if it's a dev/pre/rc suffix
++                    lower_comp = comp.lower()
++                    if lower_comp in ('dev', 'a', 'alpha'):
++                        return (0, 0, 'a')  # Alpha/dev - sort first
++                    elif lower_comp in ('b', 'beta'):
++                        return (0, 1, 'b')  # Beta - sort after alpha
++                    elif lower_comp in ('rc', 'c'):
++                        return (0, 2, 'rc')  # RC - sort after beta
++                    elif lower_comp == 'pre':
++                        return (0, 3, 'pre')  # Pre - sort after rc
++                    else:
++                        return (0, 4, lower_comp)  # Other strings - sort last among strings
++        
++        def normalize_version(v):
++            """Normalize a version string into a list of comparable components."""
++            import re
++            # Split on dots, hyphens, and other separators
++            parts = re.split(r'[.-]', v)
++            result = []
++            for part in parts:
++                if part:
++                    result.append(parse_version_component(part))
++            return result
++        
++        v1_norm = normalize_version(v1)
++        v2_norm = normalize_version(v2)
++        
++        # Pad the shorter list with (0, 0, '') to make them equal length
++        max_len = max(len(v1_norm), len(v2_norm))
++        v1_norm.extend([(0, 0, '')] * (max_len - len(v1_norm)))
++        v2_norm.extend([(0, 0, '')] * (max_len - len(v2_norm)))
++        
++        for c1, c2 in zip(v1_norm, v2_norm):
++            if c1 != c2:
++                if c1 < c2:
++                    return -1
++                else:
++                    return 1
++        return 0
++
++
+ def minversion(module, version, inclusive=True, version_path='__version__'):
+     """
+     Returns `True` if the specified Python module satisfies a minimum version
+@@ -139,10 +217,12 @@ def minversion(module, version, inclusive=True, version_path='__version__'):
+     else:
+         have_version = resolve_name(module.__name__, version_path)
+ 
++    cmp_result = _cmp_version(have_version, version)
++    
+     if inclusive:
+-        return LooseVersion(have_version) >= LooseVersion(version)
++        return cmp_result >= 0
+     else:
+-        return LooseVersion(have_version) > LooseVersion(version)
++        return cmp_result > 0
+ 
+ 
+ def find_current_module(depth=1, finddiff=False):
+
+2026-04-12 04:48:32,244 - INFO - Test runtime: 7.22 seconds
+2026-04-12 04:48:32,245 - INFO - Test output for astropy__astropy-7671 written to logs/run_evaluation/smoke_test_30_final/containerclaw-v1/astropy__astropy-7671/test_output.txt
+2026-04-12 04:48:32,488 - INFO - Git diff after:
+diff --git a/astropy/utils/introspection.py b/astropy/utils/introspection.py
+index 3e784f9fc..f58473956 100644
+--- a/astropy/utils/introspection.py
++++ b/astropy/utils/introspection.py
+@@ -88,6 +88,84 @@ def resolve_name(name, *additional_parts):
+     return ret
+ 
+ 
++def _cmp_version(v1, v2):
++    """
++    Compare two version strings, handling the LooseVersion bug with dev versions.
++    
++    See https://bugs.python.org/issue30272 for details on the LooseVersion bug.
++    
++    Returns
++    -------
++    int
++        -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2
++    """
++    try:
++        lv1 = LooseVersion(v1)
++        lv2 = LooseVersion(v2)
++        if lv1 == lv2:
++            return 0
++        elif lv1 < lv2:
++            return -1
++        else:
++            return 1
++    except TypeError:
++        # LooseVersion has a bug comparing versions like '1.14.3' with '1.14dev'
++        # The bug occurs when one version has numeric components and the other
++        # has string components at the same position.
++        # 
++        # As a workaround, we parse the versions manually and compare component by component.
++        # We treat numeric components as greater than string components (e.g., '1.14.3' > '1.14dev')
++        # since release versions should be greater than development versions.
++        
++        def parse_version_component(comp):
++            """Parse a version component, returning (sort_key, value)."""
++            try:
++                return (1, int(comp), '')  # Numeric - sort after strings
++            except ValueError:
++                try:
++                    return (1, float(comp), '')  # Float - sort after strings
++                except ValueError:
++                    # String component - check if it's a dev/pre/rc suffix
++                    lower_comp = comp.lower()
++                    if lower_comp in ('dev', 'a', 'alpha'):
++                        return (0, 0, 'a')  # Alpha/dev - sort first
++                    elif lower_comp in ('b', 'beta'):
++                        return (0, 1, 'b')  # Beta - sort after alpha
++                    elif lower_comp in ('rc', 'c'):
++                        return (0, 2, 'rc')  # RC - sort after beta
++                    elif lower_comp == 'pre':
++                        return (0, 3, 'pre')  # Pre - sort after rc
++                    else:
++                        return (0, 4, lower_comp)  # Other strings - sort last among strings
++        
++        def normalize_version(v):
++            """Normalize a version string into a list of comparable components."""
++            import re
++            # Split on dots, hyphens, and other separators
++            parts = re.split(r'[.-]', v)
++            result = []
++            for part in parts:
++                if part:
++                    result.append(parse_version_component(part))
++            return result
++        
++        v1_norm = normalize_version(v1)
++        v2_norm = normalize_version(v2)
++        
++        # Pad the shorter list with (0, 0, '') to make them equal length
++        max_len = max(len(v1_norm), len(v2_norm))
++        v1_norm.extend([(0, 0, '')] * (max_len - len(v1_norm)))
++        v2_norm.extend([(0, 0, '')] * (max_len - len(v2_norm)))
++        
++        for c1, c2 in zip(v1_norm, v2_norm):
++            if c1 != c2:
++                if c1 < c2:
++                    return -1
++                else:
++                    return 1
++        return 0
++
++
+ def minversion(module, version, inclusive=True, version_path='__version__'):
+     """
+     Returns `True` if the specified Python module satisfies a minimum version
+@@ -139,10 +217,12 @@ def minversion(module, version, inclusive=True, version_path='__version__'):
+     else:
+         have_version = resolve_name(module.__name__, version_path)
+ 
++    cmp_result = _cmp_version(have_version, version)
++    
+     if inclusive:
+-        return LooseVersion(have_version) >= LooseVersion(version)
++        return cmp_result >= 0
+     else:
+-        return LooseVersion(have_version) > LooseVersion(version)
++        return cmp_result > 0
+ 
+ 
+ def find_current_module(depth=1, finddiff=False):
+
+2026-04-12 04:48:32,488 - INFO - Grading answer for astropy__astropy-7671...
+2026-04-12 04:48:32,495 - INFO - report: {'astropy__astropy-7671': {'patch_is_None': False, 'patch_exists': True, 'patch_successfully_applied': True, 'resolved': True, 'tests_status': {'FAIL_TO_PASS': {'success': ['astropy/utils/tests/test_introspection.py::test_minversion'], 'failure': []}, 'PASS_TO_PASS': {'success': ['astropy/utils/tests/test_introspection.py::test_pkg_finder', 'astropy/utils/tests/test_introspection.py::test_find_current_mod', 'astropy/utils/tests/test_introspection.py::test_find_mod_objs'], 'failure': []}, 'FAIL_TO_FAIL': {'success': [], 'failure': []}, 'PASS_TO_FAIL': {'success': [], 'failure': []}}}}
+Result for astropy__astropy-7671: resolved: True
